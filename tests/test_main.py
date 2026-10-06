@@ -16,12 +16,14 @@ def test_console_menu_runs_from_another_directory(tmp_path):
             sys.executable, str(Path(main.__file__).resolve()),
             "--data-dir", str(data_dir),
         ],
-        cwd=tmp_path, input="9\n1\n\n0\n", capture_output=True, text=True,
+        cwd=tmp_path, input="9\n1\n0\n", capture_output=True, text=True,
         encoding="utf-8", timeout=10,
     )
     assert result.returncode == 0, result.stderr
+    assert "Логвинов Глеб Дмитриевич" in result.stdout
     assert "4.67/5" in result.stdout
     assert "5/5" in result.stdout
+    assert "Неизвестная команда" not in result.stdout
 
 
 def test_console_rejects_incomplete_seed_files(tmp_path, monkeypatch):
