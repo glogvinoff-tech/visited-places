@@ -1,0 +1,8 @@
+[
+  {"id": 1, "user_id": 1, "place_id": 1, "trip_id": 1, "visited_at": "2026-06-10 12:00", "rating": 5, "note": "Прогулка по историческому центру."},
+  {"id": 2, "user_id": 1, "place_id": 2, "trip_id": 1, "visited_at": "2026-06-11 15:30", "rating": 4, "note": "Прогулка вдоль набережной."},
+  {"id": 3, "user_id": 1, "place_id": 3, "trip_id": 2, "visited_at": "2026-07-01 11:00", "rating": 5, "note": "Посещение музейной экспозиции."},
+  {"id": 4, "user_id": 1, "place_id": 4, "trip_id": 2, "visited_at": "2026-07-02 18:00", "rating": null, "note": "Вечерняя прогулка."},
+  {"id": 5, "user_id": 2, "place_id": 5, "trip_id": 3, "visited_at": "2026-08-16 10:00", "rating": 5, "note": "Панорама города со смотровой площадки."},
+  {"id": 6, "user_id": 3, "place_id": 6, "trip_id": null, "visited_at": "2026-09-05 14:00", "rating": 4, "note": "Посещение без привязки к поездке."}
+]

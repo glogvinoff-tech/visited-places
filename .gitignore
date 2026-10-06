@@ -1,0 +1,17 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+dist/
+build/
+*.egg-info/
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
