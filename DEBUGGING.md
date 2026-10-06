@@ -50,9 +50,10 @@ python main.py --data-dir .\debug-data
 | `run` | `command`, `action`, `error` при обработке ошибки |
 | `_commit` | `candidate`, `result`, `self.journal`; до успешного `save` рабочий журнал остается прежним |
 | `_add_visit` | `place_id`, `visited_at`, `trip_id`, `rating`, `note`, `visit` после сохранения |
-| `_edit_visit`/`_delete_visit` | `visit`, `rating`, `note`, `updated` в обработчике редактирования |
+| `_edit_visit`/`_delete_visit` | `visit`, `place_id`, `visited_at`, `trip_id`, `rating`, `note`, `updated` в обработчике редактирования |
+| `_edit_place`/`_edit_user` | исходный объект, новые поля, `updated` после сохранения |
 | `_edit_trip`/`_delete_trip` | `trip`, `name`, `start_date`, `end_date`, `updated` в обработчике редактирования |
-| `_show_catalog` | `query`, `places`; пустая строка возвращает весь каталог |
+| `_show_catalog`/`_search_catalog` | `query`, `places`; пункт `2` сразу показывает весь каталог, пункт `14` запрашивает поиск |
 | `_show_statistics` | `statistics`: `visits`, `visited_places`, `cities`, `countries`, `trips`, `average_rating` |
 | `JournalDatabase` | `self.path`, `connection`; в `_check_version` - `version`, в `_write` - `table`, `items`, `records` |
 
@@ -68,14 +69,15 @@ python main.py --data-dir .\debug-data
 3. На остановке в `_commit` сравните `candidate.visits` и `self.journal.visits`.
    Пройдите сохранение: присваивание `self.journal = candidate` выполняется
    после успешного `self.database.save(candidate)`.
-4. Через `7` измените оценку и заметку. Пустой ввод сохраняет текущее значение,
-   `0` убирает оценку, `-` очищает заметку.
+4. Через `7` измените место, дату, поездку, оценку и заметку. Пустой ввод
+   сохраняет текущее значение, `0` снимает связь с поездкой или убирает оценку
+   в соответствующем поле, `-` очищает заметку.
 5. Через `12` попробуйте сузить даты поездки так, чтобы добавленное посещение
    оказалось вне диапазона. В `TravelJournal.update_trip` операция отклоняется;
    прежний рабочий журнал сохраняется, меню продолжает работать.
 6. Через `13` удалите поездку с подтверждением `д`, `да`, `y` или `yes`.
    В `remove_trip` у связанных посещений устанавливается `trip = None`.
-   История (`1`, пустой фильтр поездки) продолжает показывать посещения.
+   История (`1`) продолжает сразу показывать посещения.
 7. Завершите работу и повторно запустите приложение с тем же `--data-dir`.
    В `main` выполняется `database.load`, JSON-набор не загружается повторно.
 
@@ -94,5 +96,5 @@ python -m flake8
 ```
 
 По результатам интеграционной проверки текущей версии: `pytest==8.3.3` -
-`117 passed`, `flake8==7.1.1` - без замечаний. Шаги ручного разбора выше описывают
+`152 passed`, `flake8==7.1.1` - без замечаний. Шаги ручного разбора выше описывают
 сценарий отладки и не являются журналом его выполнения.

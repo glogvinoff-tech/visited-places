@@ -3,8 +3,11 @@ from typing import Any
 from .places import Place
 from .trips import Trip
 from .users import User
-from .utils import get_next_id, validate_identifier, validate_rating
+from .utils import get_next_id, validate_identifier
 from .visits import Visit
+
+
+_UNCHANGED = object()
 
 
 class TravelJournal:
@@ -76,11 +79,40 @@ class TravelJournal:
         self.users.append(user)
         return user
 
+    def update_user(self, user_id: int, *, name: str, email: str) -> User:
+        user = self._require(self.users, user_id, "User")
+        replacement = User(user.id, name, email)
+        if any(
+            item.id != user.id and item.email == replacement.email
+            for item in self.users
+        ):
+            raise ValueError("Email address is already registered")
+        user.name = replacement.name
+        user.email = replacement.email
+        return user
+
     def add_place(self, name: str, city: str, country: str, category: str) -> Place:
         place = Place(get_next_id(self.places), name, city, country, category)
         if any(self._place_key(item) == self._place_key(place) for item in self.places):
             raise ValueError("Place already exists in this city and country")
         self.places.append(place)
+        return place
+
+    def update_place(
+        self, place_id: int, *, name: str, city: str, country: str, category: str,
+    ) -> Place:
+        place = self._require(self.places, place_id, "Place")
+        replacement = Place(place.id, name, city, country, category)
+        if any(
+            item.id != place.id
+            and self._place_key(item) == self._place_key(replacement)
+            for item in self.places
+        ):
+            raise ValueError("Place already exists in this city and country")
+        place.name = replacement.name
+        place.city = replacement.city
+        place.country = replacement.country
+        place.category = replacement.category
         return place
 
     def add_trip(
@@ -160,14 +192,36 @@ class TravelJournal:
 
     def update_visit(
         self, user_id: int, visit_id: int, *, rating: int | None, note: str,
+        place_id: int | None = None, visited_at: str | None = None,
+        trip_id: Any = _UNCHANGED,
     ) -> Visit:
-        """Replace editable fields, validating both before making changes."""
+        """Validate all changes; omitted trip stays, explicit None detaches it."""
         visit = self._owned_visit(user_id, visit_id)
-        rating = validate_rating(rating)
-        if not isinstance(note, str):
-            raise ValueError("Note must be a string")
-        visit.rating = rating
-        visit.note = note.strip()
+        place = visit.place if place_id is None else self._require(
+            self.places, place_id, "Place"
+        )
+        trip = visit.trip
+        if trip_id is not _UNCHANGED:
+            trip = None if trip_id is None else self._require(
+                self.trips, trip_id, "Trip"
+            )
+        replacement = Visit(
+            visit.id, visit.user, place,
+            visit.visited_at if visited_at is None else visited_at,
+            rating, note, trip,
+        )
+        if any(
+            item.id != visit.id
+            and (item.user_id, item.place_id, item.visited_at)
+            == (replacement.user_id, replacement.place_id, replacement.visited_at)
+            for item in self.visits
+        ):
+            raise ValueError("This visit is already recorded")
+        visit.place = replacement.place
+        visit.visited_at = replacement.visited_at
+        visit.trip = replacement.trip
+        visit.rating = replacement.rating
+        visit.note = replacement.note
         return visit
 
     def remove_visit(self, user_id: int, visit_id: int) -> Visit:

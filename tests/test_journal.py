@@ -138,6 +138,112 @@ def test_invalid_update_does_not_partially_change_visit(journal):
     assert visit.note == "Original"
 
 
+def test_user_update_preserves_trip_and_visit_links(journal):
+    visit = journal.add_visit(1, 1, "2026-06-10 12:00", trip_id=1)
+    user = journal.update_user(1, name=" Renamed Alex ", email=" NEW@EXAMPLE.COM ")
+    assert user is journal.users[0]
+    assert user.name == "Renamed Alex"
+    assert user.email == "new@example.com"
+    assert visit.user is user
+    assert journal.trips[0].user is user
+    journal.validate()
+
+
+@pytest.mark.parametrize("name, email", [
+    ("Changed", "MARIA@EXAMPLE.COM"),
+    ("Changed", "not-an-email"),
+    ("", "new@example.com"),
+])
+def test_invalid_user_update_preserves_original_fields(journal, name, email):
+    before = journal.users[0].to_data()
+    with pytest.raises(ValueError):
+        journal.update_user(1, name=name, email=email)
+    assert journal.users[0].to_data() == before
+
+
+def test_place_update_preserves_visit_links(journal):
+    visit = journal.add_visit(1, 1, "2026-06-10 12:00")
+    place = journal.update_place(
+        1, name=" New square ", city=" New city ",
+        country=" New country ", category=" New category ",
+    )
+    assert visit.place is place
+    assert place.to_data() == {
+        "id": 1, "name": "New square", "city": "New city",
+        "country": "New country", "category": "New category",
+    }
+    journal.validate()
+
+
+@pytest.mark.parametrize("changes", [
+    {"name": ""}, {"city": ""}, {"country": ""}, {"category": ""},
+    {"name": " hermitage ", "city": "SAINT PETERSBURG", "country": "Russia"},
+])
+def test_invalid_place_update_preserves_original_fields(journal, changes):
+    before = journal.places[0].to_data()
+    fields = {key: value for key, value in before.items() if key != "id"}
+    fields.update(changes)
+    with pytest.raises(ValueError):
+        journal.update_place(1, **fields)
+    assert journal.places[0].to_data() == before
+
+
+def test_visit_update_changes_place_timestamp_and_trip_with_canonical_links(journal):
+    visit = journal.add_visit(1, 1, "2026-06-10 12:00", trip_id=1)
+    new_trip = journal.add_trip(1, "July", "2026-07-01", "2026-07-03")
+    updated = journal.update_visit(
+        1, visit.id, place_id=2, visited_at="2026-07-02 13:45",
+        trip_id=new_trip.id, rating=5, note=" Changed ",
+    )
+    assert updated is visit
+    assert updated.place is journal.places[1]
+    assert updated.trip is new_trip
+    assert updated.visited_at == "2026-07-02 13:45"
+    assert updated.rating == 5
+    assert updated.note == "Changed"
+    journal.validate()
+
+
+def test_omitted_trip_keeps_link_and_explicit_none_detaches_visit(journal):
+    visit = journal.add_visit(1, 1, "2026-06-10 12:00", trip_id=1)
+    journal.update_visit(1, visit.id, rating=5, note="Keep trip")
+    assert visit.trip is journal.trips[0]
+    journal.update_visit(
+        1, visit.id, visited_at="2026-10-06 12:00", trip_id=None,
+        rating=None, note="Detached",
+    )
+    assert visit.trip is None
+    assert visit.visited_at == "2026-10-06 12:00"
+    journal.validate()
+
+
+@pytest.mark.parametrize("changes", [
+    {"place_id": 999}, {"place_id": 0}, {"trip_id": 999}, {"trip_id": 2},
+    {"visited_at": "not-a-date"}, {"visited_at": "2026-06-13 12:00"},
+    {"rating": 6}, {"note": None},
+])
+def test_invalid_visit_field_update_is_atomic(journal, changes):
+    visit = journal.add_visit(1, 1, "2026-06-10 12:00", 4, "Original", 1)
+    before = visit.to_data()
+    arguments = {"rating": 5, "note": "Changed", "place_id": 2}
+    arguments.update(changes)
+    with pytest.raises(ValueError):
+        journal.update_visit(1, visit.id, **arguments)
+    assert visit.to_data() == before
+
+
+def test_visit_edit_cannot_create_duplicate_mark(journal):
+    visit = journal.add_visit(1, 1, "2026-06-10 12:00", 4, "Original")
+    journal.add_visit(1, 2, "2026-06-11 12:00")
+    before = visit.to_data()
+    with pytest.raises(ValueError, match="already recorded"):
+        journal.update_visit(
+            1, visit.id, place_id=2, visited_at="2026-06-11 12:00",
+            rating=5, note="Changed",
+        )
+    assert visit.to_data() == before
+
+
 def test_list_visits_filters_owner_trip_and_sorts_newest_first(journal):
     first = journal.add_visit(1, 1, "2026-06-10 12:00", trip_id=1)
     second = journal.add_visit(1, 1, "2026-06-11 12:00")
