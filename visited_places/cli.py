@@ -114,7 +114,7 @@ class ConsoleApplication:
         print(f"\nПользователь: {self.user.name}")
         print("1. История посещений")
         print("2. Каталог мест")
-        print("3. Мои поездки")
+        print("3. Поездки")
         print("4. Добавить место")
         print("5. Добавить поездку")
         print("6. Добавить посещение")
@@ -138,9 +138,9 @@ class ConsoleApplication:
             print("Посещений нет")
         for visit in visits:
             rating = f"{visit.rating}/5" if visit.rating is not None else "без оценки"
-            trip = visit.trip.name if visit.trip is not None else "без поездки"
+            trip = visit.trip.name
             print(
-                f"#{visit.id}: {visit.place.name}, {visit.place.city}, "
+                f"#{visit.id}: {visit.trip.place.name}, {visit.trip.place.city}, "
                 f"{visit.visited_at}, {rating}, {trip}"
             )
             if visit.note:
@@ -169,11 +169,8 @@ class ConsoleApplication:
         self._show_catalog(query)
 
     def _show_trips(self) -> list[Trip]:
-        print(f"Мои поездки: {self.user.name}")
-        trips = sorted(
-            (trip for trip in self.journal.trips if trip.user_id == self.user.id),
-            key=lambda trip: trip.start_date,
-        )
+        print("Поездки:")
+        trips = sorted(self.journal.trips, key=lambda trip: trip.start_date)
         if not trips:
             print("Поездок нет")
         for trip in trips:
@@ -235,30 +232,32 @@ class ConsoleApplication:
         print(f"Профиль обновлен: #{updated.id}, {updated}")
 
     def _add_trip(self) -> None:
+        self._show_catalog()
+        if not self.journal.places:
+            print("Сначала добавьте место")
+            return
+        place_id = self._integer("ID места: ")
         name = input("Название поездки: ")
         start_date = input("Дата начала (YYYY-MM-DD): ").strip()
         end_date = input("Дата окончания (YYYY-MM-DD): ").strip()
         trip = self._commit(lambda journal: journal.add_trip(
-            self.user.id, name, start_date, end_date
+            place_id, name, start_date, end_date
         ))
         print(f"Поездка сохранена: #{trip.id}, {trip.name}")
 
     def _add_visit(self) -> None:
-        if not self.journal.places:
-            print("Сначала добавьте место")
+        if not self.journal.trips:
+            print("Сначала добавьте поездку")
             return
-        for place in sort_places_by_name(self.journal.places):
-            print(f"#{place.id}: {place}")
-        place_id = self._integer("ID места: ")
-        visited_at = input("Дата посещения (YYYY-MM-DD HH:MM): ").strip()
         self._show_trips()
-        trip_id = self._optional_integer("ID поездки (необязательно): ")
+        trip_id = self._integer("ID поездки: ")
+        visited_at = input("Дата посещения (YYYY-MM-DD HH:MM): ").strip()
         rating = self._optional_integer("Оценка 1-5 (необязательно): ")
         note = input("Заметка: ")
         visit = self._commit(lambda journal: journal.add_visit(
-            self.user.id, place_id, visited_at, rating, note, trip_id
+            self.user.id, trip_id, visited_at, rating, note
         ))
-        print(f"Посещение сохранено: #{visit.id}, {visit.place.name}")
+        print(f"Посещение сохранено: #{visit.id}, {visit.trip.place.name}")
 
     def _choose_visit(self) -> Visit | None:
         visits = self.journal.list_visits(self.user.id)
@@ -275,20 +274,15 @@ class ConsoleApplication:
         visit = self._choose_visit()
         if visit is None:
             return
-        self._show_catalog()
-        place_id = self._optional_integer(f"ID места [{visit.place_id}]: ")
         visited_at = input(
             f"Дата посещения (YYYY-MM-DD HH:MM) [{visit.visited_at}]: "
         ).strip() or visit.visited_at
         self._show_trips()
-        current_trip = visit.trip_id if visit.trip_id is not None else "нет"
         trip_id = self._optional_integer(
-            f"ID поездки [{current_trip}, 0 - без поездки]: "
+            f"ID поездки [{visit.trip_id}]: "
         )
         if trip_id is None:
             trip_id = visit.trip_id
-        elif trip_id == 0:
-            trip_id = None
         current_rating = visit.rating if visit.rating is not None else "нет"
         value = input(f"Оценка [{current_rating}, 0 - убрать]: ").strip()
         rating = visit.rating
@@ -303,7 +297,7 @@ class ConsoleApplication:
         note = "" if note == "-" else note or visit.note
         updated = self._commit(lambda journal: journal.update_visit(
             self.user.id, visit.id, rating=rating, note=note,
-            place_id=place_id, visited_at=visited_at, trip_id=trip_id,
+            visited_at=visited_at, trip_id=trip_id,
         ))
         print(f"Отметка обновлена: #{updated.id}")
         self._print_visits([updated])
@@ -337,7 +331,7 @@ class ConsoleApplication:
         trip_id = self._integer("ID поездки: ")
         trip = next((trip for trip in trips if trip.id == trip_id), None)
         if trip is None:
-            raise ValueError("Поездка не найдена у пользователя")
+            raise ValueError("Поездка не найдена")
         return trip
 
     def _edit_trip(self) -> None:
@@ -345,6 +339,8 @@ class ConsoleApplication:
         if trip is None:
             return
         name = input(f"Название [{trip.name}]: ").strip() or trip.name
+        self._show_catalog()
+        place_id = self._optional_integer(f"ID места [{trip.place_id}]: ")
         start_date = input(
             f"Дата начала (YYYY-MM-DD) [{trip.start_date}]: "
         ).strip()
@@ -352,7 +348,7 @@ class ConsoleApplication:
             f"Дата окончания (YYYY-MM-DD) [{trip.end_date}]: "
         ).strip()
         updated = self._commit(lambda journal: journal.update_trip(
-            self.user.id, trip.id, name=name,
+            trip.id, name=name, place_id=place_id,
             start_date=start_date or trip.start_date,
             end_date=end_date or trip.end_date,
         ))
@@ -365,5 +361,5 @@ class ConsoleApplication:
         if not self._confirm(f"Удалить поездку #{trip.id}? [д/н]: "):
             print("Удаление отменено")
             return
-        self._commit(lambda journal: journal.remove_trip(self.user.id, trip.id))
-        print(f"Поездка удалена: #{trip.id}; отметки сохранены")
+        self._commit(lambda journal: journal.remove_trip(trip.id))
+        print(f"Поездка удалена: #{trip.id}")

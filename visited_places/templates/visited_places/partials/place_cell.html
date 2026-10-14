@@ -1,0 +1,4 @@
+<div class="place-cell">
+  {% include 'visited_places/partials/photo.html' with photo=place photo_class='table-photo' only %}
+  <div><a class="record-title" href="{{ cell_url }}">{{ cell_title }}</a><span class="record-subtitle">{{ cell_subtitle }}</span></div>
+</div>

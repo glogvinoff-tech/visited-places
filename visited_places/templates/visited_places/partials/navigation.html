@@ -1,0 +1,6 @@
+<nav class="main-nav" aria-label="Разделы журнала">
+  <a href="{% url 'visited_places:journal' %}" {% if view == 'visits' %}aria-current="page"{% endif %}><i data-lucide="notebook-pen"></i><span>Мой журнал</span></a>
+  <a href="{% url 'visited_places:places' %}" {% if view == 'places' %}aria-current="page"{% endif %}><i data-lucide="map-pinned"></i><span>Места</span></a>
+  <a href="{% url 'visited_places:trips' %}" {% if view == 'trips' %}aria-current="page"{% endif %}><i data-lucide="route"></i><span>Поездки</span></a>
+  <a href="{% url 'visited_places:statistics' %}" {% if view == 'statistics' %}aria-current="page"{% endif %}><i data-lucide="chart-no-axes-combined"></i><span>Статистика</span></a>
+</nav>

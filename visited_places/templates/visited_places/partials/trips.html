@@ -1,0 +1,21 @@
+{% load journal_display %}
+{% if records %}
+<div class="table-wrap">
+  <table class="records-table">
+    <thead><tr><th>Поездка и место</th><th>Начало</th><th>Окончание</th><th>Посещений</th><th></th></tr></thead>
+    <tbody>
+      {% for record in records %}
+      <tr>
+        <td>{% with name=record.place.name city=record.place.city %}{% include 'visited_places/partials/place_cell.html' with place=record.place cell_title=record.name cell_url=record.url cell_subtitle=name|add:', '|add:city only %}{% endwith %}</td>
+        <td data-label="Начало"><span class="date-text">{{ record.start_date|journal_date }}</span></td>
+        <td data-label="Окончание"><span class="date-text">{{ record.end_date|journal_date }}</span></td>
+        <td data-label="Посещений"><span>{{ record.visit_count }}</span></td>
+        <td>{% include 'visited_places/partials/actions.html' with resource='trips' %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+{% include 'visited_places/partials/empty.html' with empty_message='Записей не найдено' only %}
+{% endif %}

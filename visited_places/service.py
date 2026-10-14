@@ -7,9 +7,6 @@ from .utils import get_next_id, validate_identifier
 from .visits import Visit
 
 
-_UNCHANGED = object()
-
-
 class TravelJournal:
     """Coordinate the four entities and enforce links and ownership."""
 
@@ -54,20 +51,17 @@ class TravelJournal:
         if len({self._place_key(place) for place in self.places}) != len(self.places):
             raise ValueError("Place already exists in this city and country")
         for trip in self.trips:
-            Trip.from_data(trip.to_data(), self.users)
-            if self._require(self.users, trip.user_id, "User") is not trip.user:
-                raise ValueError("Trip owner must reference a journal user")
+            Trip.from_data(trip.to_data(), self.places)
+            if self._require(self.places, trip.place_id, "Place") is not trip.place:
+                raise ValueError("Trip must reference a journal place")
         keys = set()
         for visit in self.visits:
-            Visit.from_data(visit.to_data(), self.users, self.places, self.trips)
+            Visit.from_data(visit.to_data(), self.users, self.trips)
             if self._require(self.users, visit.user_id, "User") is not visit.user:
                 raise ValueError("Visit owner must reference a journal user")
-            if self._require(self.places, visit.place_id, "Place") is not visit.place:
-                raise ValueError("Visit must reference a journal place")
-            if visit.trip is not None:
-                if self._require(self.trips, visit.trip_id, "Trip") is not visit.trip:
-                    raise ValueError("Visit must reference a journal trip")
-            key = (visit.user_id, visit.place_id, visit.visited_at)
+            if self._require(self.trips, visit.trip_id, "Trip") is not visit.trip:
+                raise ValueError("Visit must reference a journal trip")
+            key = (visit.user_id, visit.trip_id, visit.visited_at)
             if key in keys:
                 raise ValueError("This visit is already recorded")
             keys.add(key)
@@ -116,70 +110,63 @@ class TravelJournal:
         return place
 
     def add_trip(
-        self, user_id: int, name: str, start_date: str, end_date: str,
+        self, place_id: int, name: str, start_date: str, end_date: str,
     ) -> Trip:
-        user = self._require(self.users, user_id, "User")
-        trip = Trip(get_next_id(self.trips), user, name, start_date, end_date)
+        place = self._require(self.places, place_id, "Place")
+        trip = Trip(get_next_id(self.trips), place, name, start_date, end_date)
         self.trips.append(trip)
         return trip
 
     def add_visit(
         self,
         user_id: int,
-        place_id: int,
+        trip_id: int,
         visited_at: str,
         rating: int | None = None,
         note: str = "",
-        trip_id: int | None = None,
     ) -> Visit:
         user = self._require(self.users, user_id, "User")
-        place = self._require(self.places, place_id, "Place")
-        trip = None
-        if trip_id is not None:
-            trip = self._require(self.trips, trip_id, "Trip")
+        trip = self._require(self.trips, trip_id, "Trip")
         visit = Visit(
-            get_next_id(self.visits), user, place, visited_at, rating, note, trip
+            get_next_id(self.visits), user, trip, visited_at, rating, note
         )
         if any(
-            (item.user_id, item.place_id, item.visited_at)
-            == (visit.user_id, visit.place_id, visit.visited_at)
+            (item.user_id, item.trip_id, item.visited_at)
+            == (visit.user_id, visit.trip_id, visit.visited_at)
             for item in self.visits
         ):
             raise ValueError("This visit is already recorded")
         self.visits.append(visit)
         return visit
 
-    def _owned_trip(self, user_id: int, trip_id: int) -> Trip:
-        self._require(self.users, user_id, "User")
-        trip = self._require(self.trips, trip_id, "Trip")
-        if trip.user_id != user_id:
-            raise ValueError("A user can only change their own trips")
-        return trip
-
     def update_trip(
-        self, user_id: int, trip_id: int, *,
+        self, trip_id: int, *,
         name: str, start_date: str, end_date: str,
+        place_id: int | None = None,
     ) -> Trip:
         """Change a trip only if all its existing visits still fit."""
-        trip = self._owned_trip(user_id, trip_id)
-        replacement = Trip(trip.id, trip.user, name, start_date, end_date)
+        trip = self._require(self.trips, trip_id, "Trip")
+        place = trip.place if place_id is None else self._require(
+            self.places, place_id, "Place"
+        )
+        replacement = Trip(trip.id, place, name, start_date, end_date)
         for visit in self.visits:
             if visit.trip_id == trip.id:
                 Visit(
-                    visit.id, visit.user, visit.place, visit.visited_at,
-                    visit.rating, visit.note, replacement,
+                    visit.id, visit.user, replacement, visit.visited_at,
+                    visit.rating, visit.note,
                 )
         trip.name = replacement.name
+        trip.place = replacement.place
         trip.start_date = replacement.start_date
         trip.end_date = replacement.end_date
         return trip
 
-    def remove_trip(self, user_id: int, trip_id: int) -> Trip:
-        """Remove a trip while keeping its marks as standalone visits."""
-        trip = self._owned_trip(user_id, trip_id)
-        for visit in self.visits:
-            if visit.trip_id == trip.id:
-                visit.trip = None
+    def remove_trip(self, trip_id: int) -> Trip:
+        """Only remove unused trips so their visits never lose their place."""
+        trip = self._require(self.trips, trip_id, "Trip")
+        if any(visit.trip_id == trip.id for visit in self.visits):
+            raise ValueError("Сначала удалите или перенесите посещения этой поездки")
         self.trips.remove(trip)
         return trip
 
@@ -192,32 +179,25 @@ class TravelJournal:
 
     def update_visit(
         self, user_id: int, visit_id: int, *, rating: int | None, note: str,
-        place_id: int | None = None, visited_at: str | None = None,
-        trip_id: Any = _UNCHANGED,
+        visited_at: str | None = None, trip_id: int | None = None,
     ) -> Visit:
-        """Validate all changes; omitted trip stays, explicit None detaches it."""
+        """Validate all fields; omitted trip keeps the existing link."""
         visit = self._owned_visit(user_id, visit_id)
-        place = visit.place if place_id is None else self._require(
-            self.places, place_id, "Place"
+        trip = visit.trip if trip_id is None else self._require(
+            self.trips, trip_id, "Trip"
         )
-        trip = visit.trip
-        if trip_id is not _UNCHANGED:
-            trip = None if trip_id is None else self._require(
-                self.trips, trip_id, "Trip"
-            )
         replacement = Visit(
-            visit.id, visit.user, place,
+            visit.id, visit.user, trip,
             visit.visited_at if visited_at is None else visited_at,
-            rating, note, trip,
+            rating, note,
         )
         if any(
             item.id != visit.id
-            and (item.user_id, item.place_id, item.visited_at)
-            == (replacement.user_id, replacement.place_id, replacement.visited_at)
+            and (item.user_id, item.trip_id, item.visited_at)
+            == (replacement.user_id, replacement.trip_id, replacement.visited_at)
             for item in self.visits
         ):
             raise ValueError("This visit is already recorded")
-        visit.place = replacement.place
         visit.visited_at = replacement.visited_at
         visit.trip = replacement.trip
         visit.rating = replacement.rating
@@ -233,9 +213,7 @@ class TravelJournal:
         """Return the owner's history, newest first, optionally for one trip."""
         self._require(self.users, user_id, "User")
         if trip_id is not None:
-            trip = self._require(self.trips, trip_id, "Trip")
-            if trip.user_id != user_id:
-                raise ValueError("A user can only view their own trips")
+            self._require(self.trips, trip_id, "Trip")
         return sorted(
             (
                 visit for visit in self.visits

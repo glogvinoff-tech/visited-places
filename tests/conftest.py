@@ -13,7 +13,8 @@ def journal():
     journal.add_place("Hermitage", "Saint Petersburg", "Russia", "Museum")
     journal.add_place("Galata Tower", "Istanbul", "Turkey", "Landmark")
     journal.add_trip(1, "Moscow weekend", "2026-06-10", "2026-06-12")
-    journal.add_trip(2, "Istanbul", "2026-08-15", "2026-08-17")
+    journal.add_trip(3, "Istanbul", "2026-08-15", "2026-08-17")
+    journal.add_trip(2, "Petersburg", "2026-07-01", "2026-07-03")
     return journal
 
 

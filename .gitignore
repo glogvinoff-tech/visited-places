@@ -10,6 +10,7 @@ __pycache__/
 !.vscode/settings.json
 dist/
 build/
+staticfiles/
 *.egg-info/
 *.sqlite3
 *.sqlite3-journal

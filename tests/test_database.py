@@ -10,14 +10,14 @@ from visited_places.service import TravelJournal
 def test_database_round_trip_preserves_unicode_notes_and_object_links(
     journal, journal_database,
 ):
-    visit = journal.add_visit(1, 1, "2026-06-10 12:00", 5, "Памятное посещение", 1)
+    visit = journal.add_visit(1, 1, "2026-06-10 12:00", 5, "Памятное посещение")
     journal_database.save(journal)
     restored = journal_database.load()
     assert restored.visits[0].to_data() == visit.to_data()
     assert restored.visits[0].user is restored.users[0]
-    assert restored.visits[0].place is restored.places[0]
+    assert restored.visits[0].trip.place is restored.places[0]
     assert restored.visits[0].trip is restored.trips[0]
-    assert restored.trips[0].user is restored.users[0]
+    assert restored.trips[0].place is restored.places[0]
 
 
 def test_database_can_persist_an_empty_journal(tmp_path):
@@ -60,16 +60,18 @@ def test_invalid_snapshot_is_rejected_without_changing_database(
 
 
 def test_database_persists_visit_edits_and_trip_removal(journal, journal_database):
-    visit = journal.add_visit(1, 1, "2026-06-10 12:00", 4, "Original", 1)
+    visit = journal.add_visit(1, 1, "2026-06-10 12:00", 4, "Original")
     journal_database.save(journal)
     journal.update_visit(1, visit.id, rating=5, note="Updated")
-    journal.remove_trip(1, 1)
+    with pytest.raises(ValueError, match="посещения"):
+        journal.remove_trip(1)
     journal_database.save(journal)
     restored = JournalDatabase(journal_database.path).load()
     assert restored.visits[0].rating == 5
     assert restored.visits[0].note == "Updated"
-    assert restored.visits[0].trip is None
+    assert restored.visits[0].trip is restored.trips[0]
     journal.remove_visit(1, visit.id)
+    journal.remove_trip(1)
     journal_database.save(journal)
     assert not journal_database.load().visits
 

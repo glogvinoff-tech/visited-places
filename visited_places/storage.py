@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .places import Place
+from .migration import migrate_legacy_records
 from .service import TravelJournal
 from .trips import Trip
 from .users import User
@@ -60,9 +61,9 @@ def save_places(path: str | Path, places: list[Place]) -> None:
     save_json(path, [place.to_data() for place in places])
 
 
-def load_trips(path: str | Path, users: list[User]) -> list[Trip]:
+def load_trips(path: str | Path, places: list[Place]) -> list[Trip]:
     try:
-        return [Trip.from_data(item, users) for item in _load_records(path)]
+        return [Trip.from_data(item, places) for item in _load_records(path)]
     except KeyError as error:
         raise ValueError(f"Missing trip field in {path}: {error}") from error
 
@@ -72,11 +73,11 @@ def save_trips(path: str | Path, trips: list[Trip]) -> None:
 
 
 def load_visits(
-    path: str | Path, users: list[User], places: list[Place], trips: list[Trip],
+    path: str | Path, users: list[User], trips: list[Trip],
 ) -> list[Visit]:
     try:
         return [
-            Visit.from_data(item, users, places, trips) for item in _load_records(path)
+            Visit.from_data(item, users, trips) for item in _load_records(path)
         ]
     except KeyError as error:
         raise ValueError(f"Missing visit field in {path}: {error}") from error
@@ -89,10 +90,28 @@ def save_visits(path: str | Path, visits: list[Visit]) -> None:
 def load_journal(directory: str | Path) -> TravelJournal:
     """Load parents first, then resolve trip and visit references."""
     directory = Path(directory)
-    users = load_users(directory / "users.json")
-    places = load_places(directory / "places.json")
-    trips = load_trips(directory / "trips.json", users)
-    visits = load_visits(directory / "visits.json", users, places, trips)
+    records = {
+        table: _load_records(directory / f"{table}.json")
+        for table in ("users", "places", "trips", "visits")
+    }
+    if any("user_id" in item for item in records["trips"]) or any(
+        "place_id" in item for item in records["visits"]
+    ):
+        try:
+            records = migrate_legacy_records(records)
+        except KeyError as error:
+            raise ValueError(f"Missing legacy journal field: {error}") from error
+    return journal_from_records(records)
+
+
+def journal_from_records(records: dict[str, list[dict[str, Any]]]) -> TravelJournal:
+    try:
+        users = [User.from_data(item) for item in records["users"]]
+        places = [Place.from_data(item) for item in records["places"]]
+        trips = [Trip.from_data(item, places) for item in records["trips"]]
+        visits = [Visit.from_data(item, users, trips) for item in records["visits"]]
+    except KeyError as error:
+        raise ValueError(f"Missing journal field: {error}") from error
     return TravelJournal(users, places, trips, visits)
 
 

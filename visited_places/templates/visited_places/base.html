@@ -1,0 +1,18 @@
+{% load static %}
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}Visited Places{% endblock %}</title>
+  <link rel="icon" href="{% static 'visited_places/images/red-square.jpg' %}" type="image/jpeg">
+  <link rel="stylesheet" href="{% static 'visited_places/app.css' %}">
+  <script src="{% static 'visited_places/vendor/lucide.min.js' %}" defer></script>
+  {% block scripts %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  {% block content %}{% endblock %}
+  <script src="{% static 'visited_places/base.js' %}" defer></script>
+</body>
+</html>

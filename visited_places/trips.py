@@ -1,22 +1,24 @@
 from typing import Any
 
-from .users import User
+from .places import Place
 from .utils import parse_date, require_text, validate_identifier
 
 
 class Trip:
-    """A named date interval belonging to one user."""
+    """A shared trip to one place during a named date interval."""
 
     def __init__(
         self,
         trip_id: int,
-        user: User,
+        place: Place,
         name: str,
         start_date: str,
         end_date: str,
     ) -> None:
         self.id = validate_identifier(trip_id)
-        self.user = user
+        if not isinstance(place, Place):
+            raise ValueError("Trip requires a place")
+        self.place = place
         self.name = require_text(name, "Trip name")
         if parse_date(start_date) > parse_date(end_date):
             raise ValueError("Trip start date must not follow its end date")
@@ -24,27 +26,27 @@ class Trip:
         self.end_date = end_date
 
     @property
-    def user_id(self) -> int:
-        return self.user.id
+    def place_id(self) -> int:
+        return self.place.id
 
     @classmethod
-    def from_data(cls, data: dict[str, Any], users: list[User]) -> "Trip":
-        user_id = validate_identifier(data["user_id"])
-        user = next((user for user in users if user.id == user_id), None)
-        if user is None:
-            raise ValueError(f"Trip owner not found: {user_id}")
+    def from_data(cls, data: dict[str, Any], places: list[Place]) -> "Trip":
+        place_id = validate_identifier(data["place_id"])
+        place = next((place for place in places if place.id == place_id), None)
+        if place is None:
+            raise ValueError(f"Trip place not found: {place_id}")
         return cls(
-            data["id"], user, data["name"], data["start_date"], data["end_date"]
+            data["id"], place, data["name"], data["start_date"], data["end_date"]
         )
 
     def to_data(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "user_id": self.user_id,
+            "place_id": self.place_id,
             "name": self.name,
             "start_date": self.start_date,
             "end_date": self.end_date,
         }
 
     def __str__(self) -> str:
-        return f"{self.name} ({self.start_date} - {self.end_date})"
+        return f"{self.name}: {self.place} ({self.start_date} - {self.end_date})"

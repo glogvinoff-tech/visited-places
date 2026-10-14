@@ -1,0 +1,5 @@
+{% if photo.image %}
+<img class="{{ photo_class }}" src="{{ photo.image }}" alt="{{ photo.name }}" loading="lazy" data-place-photo {% if photo.credit and photo.credit.height > photo.credit.width and photo_class != 'table-photo' %}style="object-fit: contain"{% endif %}>
+{% else %}
+<div class="{{ photo_class }} photo-placeholder"><i data-lucide="map-pin" aria-hidden="true"></i></div>
+{% endif %}

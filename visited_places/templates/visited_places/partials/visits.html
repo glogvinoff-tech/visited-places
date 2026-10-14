@@ -1,0 +1,22 @@
+{% load journal_display %}
+{% if records %}
+<div class="table-wrap">
+  <table class="records-table">
+    <thead><tr><th>Место</th><th>Дата</th><th>Поездка</th><th>Оценка</th><th>Заметка</th><th></th></tr></thead>
+    <tbody>
+      {% for record in records %}
+      <tr>
+        <td>{% with city=record.trip.place.city country=record.trip.place.country %}{% include 'visited_places/partials/place_cell.html' with place=record.trip.place cell_title=record.trip.place.name cell_url=record.url cell_subtitle=city|add:', '|add:country only %}{% endwith %}</td>
+        <td data-label="Дата"><div class="date-text">{{ record.visited_at|journal_date }}<span class="record-subtitle">{{ record.visited_at|journal_time }}</span></div></td>
+        <td data-label="Поездка"><a class="record-title" href="{{ record.trip.url }}">{{ record.trip.name }}</a></td>
+        <td data-label="Оценка">{% if record.rating is not None %}<span class="rating"><i data-lucide="star" aria-hidden="true"></i><span>{{ record.rating }}/5</span></span>{% else %}<span class="record-subtitle">Без оценки</span>{% endif %}</td>
+        <td data-label="Заметка" class="cell-note"><div class="note" title="{{ record.note }}">{{ record.note|default:'Нет заметки' }}</div></td>
+        <td>{% include 'visited_places/partials/actions.html' with resource='visits' %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+{% include 'visited_places/partials/empty.html' with empty_message='Посещений не найдено' empty_icon='notebook-pen' only %}
+{% endif %}

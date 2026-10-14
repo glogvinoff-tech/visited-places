@@ -36,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if database.exists:
             journal = database.load()
+            if database.last_backup_path is not None:
+                print(f"База обновлена. Резервная копия: {database.last_backup_path}")
         else:
             seed_files = [
                 data_dir / f"{table}.json"

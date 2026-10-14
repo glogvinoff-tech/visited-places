@@ -1,0 +1,17 @@
+{% if records %}
+<div class="places-grid">
+  {% for record in records %}
+  <article class="place-card">
+    {% include 'visited_places/partials/photo.html' with photo=record photo_class='place-photo' only %}
+    <div class="place-card-body">
+      <h3><a href="{% url 'visited_places:place-detail' record.id %}">{{ record.name }}</a></h3>
+      <p class="location"><i data-lucide="map-pin" aria-hidden="true"></i><span>{{ record.city }}, {{ record.country }}</span></p>
+      <div class="card-bottom"><span class="category">{{ record.category }}</span>{% include 'visited_places/partials/actions.html' with resource='places' %}</div>
+    </div>
+    {% if record.credit %}<a class="photo-credit" href="{{ record.credit.source }}" target="_blank" rel="noopener" title="{{ record.credit.author }} ({{ record.credit.license }})">Фото: {{ record.credit.author }} · {{ record.credit.license }}</a>{% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+{% include 'visited_places/partials/empty.html' with empty_message='Записей не найдено' only %}
+{% endif %}

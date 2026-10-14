@@ -2,7 +2,16 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Visited Places",
+            "name": "Django: Visited Places",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/manage.py",
+            "args": ["runserver", "127.0.0.1:8000", "--noreload"],
+            "django": true,
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python: Visited Places (console)",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main.py",

@@ -1,0 +1,24 @@
+{% extends 'visited_places/base.html' %}
+{% block title %}Вход | Visited Places{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block content %}
+<main class="auth-layout">
+  <a class="brand auth-brand" href="{% url 'visited_places:journal' %}"><span class="brand-icon"><i data-lucide="map-pin"></i></span>Visited Places</a>
+  <section class="auth-form-section">
+    <p class="section-label">ЛИЧНЫЙ ЖУРНАЛ</p>
+    <h1>С возвращением</h1>
+    <form method="post" class="auth-form">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}">
+      {% for error in form.non_field_errors %}<p class="form-error" role="alert">{{ error }}</p>{% endfor %}
+      <label for="id_username">Логин</label>
+      <input id="id_username" name="username" value="{{ form.username.value|default:'' }}" autocomplete="username" required autofocus>
+      <label for="id_password">Пароль</label>
+      <input id="id_password" name="password" type="password" autocomplete="current-password" required>
+      <button class="button primary" type="submit">Войти<i data-lucide="arrow-right"></i></button>
+    </form>
+    <p class="auth-switch">Нет аккаунта? <a href="{% url 'visited_places:register' %}">Зарегистрироваться</a></p>
+  </section>
+  <footer class="auth-footer">Логвинов Глеб Дмитриевич<br>ЭФБО-14-24</footer>
+</main>
+{% endblock %}

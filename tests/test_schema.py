@@ -32,14 +32,14 @@ def database():
 
 def insert_visit(database, **changes):
     record = {
-        "id": 20, "user_id": 1, "place_id": 1, "trip_id": 1,
+        "id": 20, "user_id": 1, "trip_id": 1,
         "visited_at": "2026-06-12 12:00", "rating": 5, "note": "New visit",
     }
     record.update(changes)
     database.execute(
         "INSERT INTO visits "
-        "(id, user_id, place_id, trip_id, visited_at, rating, note) "
-        "VALUES (:id, :user_id, :place_id, :trip_id, :visited_at, :rating, :note)",
+        "(id, user_id, trip_id, visited_at, rating, note) "
+        "VALUES (:id, :user_id, :trip_id, :visited_at, :rating, :note)",
         record,
     )
 
@@ -51,8 +51,8 @@ def test_schema_accepts_the_journals_demo_records(database):
 
 
 @pytest.mark.parametrize("changes", [
-    {"user_id": 999, "trip_id": None}, {"place_id": 999}, {"trip_id": 999},
-    {"user_id": 2}, {"visited_at": "2026-06-13 00:00"}, {"rating": 0},
+    {"user_id": 999}, {"trip_id": None}, {"trip_id": 999},
+    {"visited_at": "2026-06-13 00:00"}, {"rating": 0},
     {"rating": 6}, {"rating": 4.5}, {"note": None},
     {"visited_at": "2026-02-30 12:00", "trip_id": None},
     {"visited_at": "not-a-valid-date", "trip_id": None},
@@ -63,11 +63,11 @@ def test_schema_rejects_invalid_visits(database, changes):
         insert_visit(database, **changes)
 
 
-def test_schema_allows_visits_without_trip_or_rating(database):
-    insert_visit(database, trip_id=None, rating=None)
+def test_schema_allows_different_users_on_a_trip_and_optional_rating(database):
+    insert_visit(database, user_id=2, rating=None)
     assert database.execute(
         "SELECT trip_id, rating FROM visits WHERE id = 20"
-    ).fetchone() == (None, None)
+    ).fetchone() == (1, None)
 
 
 @pytest.mark.parametrize("start,end", [
@@ -77,15 +77,14 @@ def test_schema_allows_visits_without_trip_or_rating(database):
 def test_schema_rejects_invalid_trip_dates(database, start, end):
     with pytest.raises(sqlite3.IntegrityError):
         database.execute(
-            "INSERT INTO trips (id, user_id, name, start_date, end_date) "
+            "INSERT INTO trips (id, place_id, name, start_date, end_date) "
             "VALUES (20, 1, 'Invalid trip', ?, ?)", (start, end),
         )
 
 
 @pytest.mark.parametrize("statement", [
-    "UPDATE visits SET user_id = 2 WHERE id = 1",
     "UPDATE visits SET visited_at = '2026-06-13 12:00' WHERE id = 1",
-    "UPDATE trips SET user_id = 2 WHERE id = 1",
+    "UPDATE visits SET trip_id = 3 WHERE id = 1",
     "UPDATE trips SET start_date = '2026-06-11' WHERE id = 1",
 ])
 def test_schema_prevents_updates_that_break_trip_visit_links(database, statement):
@@ -93,11 +92,12 @@ def test_schema_prevents_updates_that_break_trip_visit_links(database, statement
         database.execute(statement)
 
 
-def test_deleting_trip_preserves_its_marks_without_trip_link(database):
-    database.execute("DELETE FROM trips WHERE id = 1")
+def test_deleting_used_trip_is_restricted_and_preserves_marks(database):
+    with pytest.raises(sqlite3.IntegrityError):
+        database.execute("DELETE FROM trips WHERE id = 1")
     assert database.execute(
         "SELECT trip_id FROM visits WHERE id IN (1, 2)"
-    ).fetchall() == [(None,), (None,)]
+    ).fetchall() == [(1,), (4,)]
 
 
 def test_deleting_used_place_is_restricted(database):
@@ -108,7 +108,7 @@ def test_deleting_used_place_is_restricted(database):
 def test_deleting_user_removes_only_their_private_data(database):
     database.execute("DELETE FROM users WHERE id = 1")
     assert database.execute("SELECT COUNT(*) FROM visits").fetchone() == (2,)
-    assert database.execute("SELECT COUNT(*) FROM trips").fetchone() == (1,)
+    assert database.execute("SELECT COUNT(*) FROM trips").fetchone() == (6,)
     assert database.execute("SELECT COUNT(*) FROM places").fetchone() == (6,)
 
 
@@ -118,3 +118,18 @@ def test_schema_enforces_unique_email(database):
             "INSERT INTO users (id, name, email) VALUES (20, 'Other', ?)",
             ("ALEXEY@EXAMPLE.COM",),
         )
+
+
+def test_schema_places_belong_to_trips_not_visits_and_trips_have_no_user(database):
+    trips = {row[1] for row in database.execute("PRAGMA table_info(trips)")}
+    visits = {row[1] for row in database.execute("PRAGMA table_info(visits)")}
+    assert "user_id" not in trips
+    assert "place_id" in trips
+    assert "place_id" not in visits
+    assert "trip_id" in visits
+    assert database.execute("PRAGMA user_version").fetchone() == (2,)
+
+
+def test_schema_rejects_trips_with_unknown_places(database):
+    with pytest.raises(sqlite3.IntegrityError):
+        database.execute("UPDATE trips SET place_id = 999 WHERE id = 1")

@@ -53,8 +53,8 @@ def test_missing_entity_fields_are_reported(tmp_path, loader):
 
 
 def test_save_and_load_journal_preserves_all_links_and_values(tmp_path, journal):
-    journal.add_visit(1, 1, "2026-06-10 12:00", 5, "Great view", 1)
-    journal.add_visit(2, 3, "2026-08-16 12:00")
+    journal.add_visit(1, 1, "2026-06-10 12:00", 5, "Great view")
+    journal.add_visit(2, 2, "2026-08-16 12:00")
     save_journal(tmp_path, journal)
     restored = load_journal(tmp_path)
 
@@ -62,43 +62,43 @@ def test_save_and_load_journal_preserves_all_links_and_values(tmp_path, journal)
         assert [item.to_data() for item in getattr(restored, attribute)] == [
             item.to_data() for item in getattr(journal, attribute)
         ]
-    assert restored.trips[0].user is restored.users[0]
+    assert restored.trips[0].place is restored.places[0]
     assert restored.visits[0].user is restored.users[0]
-    assert restored.visits[0].place is restored.places[0]
+    assert restored.visits[0].trip.place is restored.places[0]
     assert restored.visits[0].trip is restored.trips[0]
-    assert restored.visits[1].trip is None
+    assert restored.visits[1].trip is restored.trips[1]
     assert restored.visits[1].rating is None
 
 
 def test_demo_data_loads_as_a_consistent_journal():
     journal = load_journal(DATA_DIR)
     assert (len(journal.users), len(journal.places)) == (3, 6)
-    assert (len(journal.trips), len(journal.visits)) == (3, 6)
+    assert (len(journal.trips), len(journal.visits)) == (6, 6)
     assert len(journal.list_visits(1)) == 4
 
 
 def test_orphan_trip_is_rejected(tmp_path):
     path = tmp_path / "trips.json"
     save_json(path, [{
-        "id": 1, "user_id": 999, "name": "Trip",
+        "id": 1, "place_id": 999, "name": "Trip",
         "start_date": "2026-06-10", "end_date": "2026-06-12",
     }])
-    with pytest.raises(ValueError, match="owner not found"):
+    with pytest.raises(ValueError, match="place not found"):
         load_trips(path, [])
 
 
 @pytest.mark.parametrize("changes", [
-    {"user_id": 999}, {"place_id": 999}, {"trip_id": 999},
+    {"user_id": 999}, {"trip_id": None}, {"trip_id": 999},
     {"trip_id": 2}, {"visited_at": "2026-06-13 12:00"},
 ])
 def test_invalid_visit_references_rejected_on_load(tmp_path, journal, changes):
     path = tmp_path / "visits.json"
-    visit = journal.add_visit(1, 1, "2026-06-10 12:00", trip_id=1)
+    visit = journal.add_visit(1, 1, "2026-06-10 12:00")
     data = visit.to_data()
     data.update(changes)
     save_json(path, [data])
     with pytest.raises(ValueError):
-        load_visits(path, journal.users, journal.places, journal.trips)
+        load_visits(path, journal.users, journal.trips)
 
 
 def test_duplicate_ids_in_files_are_rejected(tmp_path, journal):
@@ -121,12 +121,12 @@ def test_duplicate_visit_records_in_files_are_rejected(tmp_path, journal):
 
 
 @pytest.mark.parametrize("changes", [
-    {"rating": 10}, {"visited_at": "2026-06-13 12:00"}, {"user_id": 2},
+    {"rating": 10}, {"visited_at": "2026-06-13 12:00"}, {"user_id": 999},
 ])
 def test_invalid_object_state_is_rejected_before_saving(tmp_path, journal, changes):
-    visit = journal.add_visit(1, 1, "2026-06-10 12:00", trip_id=1)
+    visit = journal.add_visit(1, 1, "2026-06-10 12:00")
     if "user_id" in changes:
-        visit.user = journal.users[1]
+        visit.user = type(journal.users[0])(999, "Other", "other@example.com")
     else:
         for name, value in changes.items():
             setattr(visit, name, value)

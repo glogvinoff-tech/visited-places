@@ -2,16 +2,15 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from uuid import uuid4
 
-from .places import Place
+from .migration import migrate_legacy_records
 from .service import TravelJournal
-from .trips import Trip
-from .users import User
-from .visits import Visit
+from .storage import journal_from_records
 
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "database" / "schema.sql"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class JournalDatabase:
@@ -19,6 +18,7 @@ class JournalDatabase:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path).resolve()
+        self.last_backup_path: Path | None = None
 
     @property
     def exists(self) -> bool:
@@ -49,30 +49,60 @@ class JournalDatabase:
             self.path.unlink(missing_ok=True)
             raise
 
-    @staticmethod
-    def _check_version(connection: sqlite3.Connection) -> None:
+    def _check_version(self, connection: sqlite3.Connection) -> None:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version == 1:
+            self._upgrade(connection)
+            return
         if version != SCHEMA_VERSION:
             raise ValueError(f"Unsupported database schema version: {version}")
+
+    @staticmethod
+    def _records(connection: sqlite3.Connection) -> dict[str, list[dict]]:
+        return {
+            table: [dict(row) for row in connection.execute(
+                f"SELECT * FROM {table} ORDER BY id"
+            )]
+            for table in ("users", "places", "trips", "visits")
+        }
+
+    def _upgrade(self, connection: sqlite3.Connection) -> None:
+        backup_path = self.path.with_name(
+            f"{self.path.stem}.v1-backup-{uuid4().hex}{self.path.suffix}"
+        )
+        if backup_path.exists():
+            raise FileExistsError(f"Backup already exists: {backup_path}")
+        backup = sqlite3.connect(backup_path)
+        try:
+            connection.backup(backup)
+        finally:
+            backup.close()
+        connection.execute("BEGIN IMMEDIATE")
+        records = migrate_legacy_records(self._records(connection))
+        journal = journal_from_records(records)
+        for table in ("visits", "trips", "places", "users"):
+            connection.execute(f"DROP TABLE {table}")
+        # SQLite parses complete statements, including multi-line trigger bodies.
+        statement = ""
+        for line in SCHEMA_PATH.read_text(encoding="utf-8").splitlines(keepends=True):
+            statement += line
+            if sqlite3.complete_statement(statement):
+                connection.execute(statement)
+                statement = ""
+        if statement.strip():
+            raise sqlite3.OperationalError("Incomplete schema statement")
+        self._write(connection, journal)
+        if connection.execute("PRAGMA foreign_key_check").fetchall():
+            raise sqlite3.IntegrityError("Migration left invalid foreign keys")
+        self.last_backup_path = backup_path
 
     def load(self) -> TravelJournal:
         if not self.exists:
             raise FileNotFoundError(f"Database not found: {self.path}")
         with self._connection() as connection:
             self._check_version(connection)
-            records = {
-                table: [dict(row) for row in connection.execute(
-                    f"SELECT * FROM {table} ORDER BY id"
-                )]
-                for table in ("users", "places", "trips", "visits")
-            }
-        users = [User.from_data(item) for item in records["users"]]
-        places = [Place.from_data(item) for item in records["places"]]
-        trips = [Trip.from_data(item, users) for item in records["trips"]]
-        visits = [
-            Visit.from_data(item, users, places, trips) for item in records["visits"]
-        ]
-        return TravelJournal(users, places, trips, visits)
+            records = self._records(connection)
+        return journal_from_records(records)
 
     def save(self, journal: TravelJournal) -> None:
         journal.validate()
