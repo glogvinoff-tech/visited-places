@@ -1,6 +1,0 @@
-<div class="actions">
-  {% if resource == 'visits' or user.is_staff %}
-  <button type="button" class="icon-button" title="Редактировать" aria-label="Редактировать" data-record-action="edit" data-resource="{{ resource }}" data-record-id="{{ record.id }}"><i data-lucide="pencil" aria-hidden="true"></i></button>
-  <button type="button" class="icon-button delete" title="Удалить" aria-label="Удалить" data-record-action="delete" data-resource="{{ resource }}" data-record-id="{{ record.id }}"><i data-lucide="trash-2" aria-hidden="true"></i></button>
-  {% endif %}
-</div>

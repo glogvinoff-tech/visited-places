@@ -1,0 +1,58 @@
+{% extends "visited_places/base.html" %}
+{% load journal_display %}
+{% block content %}
+  <div class="page-heading"><h1>Поездки</h1><a class="button"
+   href="{% url 'visited_places:trip-create' %}"><i data-lucide="plus"></i>Добавить поездку</a></div>
+  <form method="get" class="filters">
+    <label class="search-label">
+      <span>Поиск</span><input type="search"
+       name="q"
+       value="{{ q }}"
+       placeholder="Название поездки или места">
+    </label>
+    <label>
+      <span>Поездки на дату</span><input type="date" name="date" value="{{ date }}">
+    </label>
+    <button class="icon-button filter-submit" title="Найти" aria-label="Найти">
+      <i data-lucide="search"></i>
+    </button>
+    <a class="icon-button filter-submit"
+       href="{% url 'visited_places:trips' %}"
+       title="Сбросить фильтры"
+       aria-label="Сбросить фильтры"><i data-lucide="rotate-ccw"></i></a>
+  </form>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Поездка</th>
+          <th>Место</th>
+          <th>Начало</th>
+          <th>Окончание</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for trip in trips %}
+          <tr>
+            <td><a class="record-title"
+   href="{% url 'visited_places:trip-detail' trip.id %}">{{ trip.name }}</a></td>
+            <td data-label="Место"><div><a href="{% url 'visited_places:place-detail' trip.place_id %}">{{ trip.place_name }}</a><small>{{ trip.city }}</small></div></td>
+            <td data-label="Начало">{{ trip.start_date|journal_date }}</td>
+            <td data-label="Окончание">{{ trip.end_date|journal_date }}</td>
+            <td class="row-actions">
+              {% if user.is_staff %}
+                <a class="icon-button"
+                   href="{% url 'visited_places:trip-edit' trip.id %}"
+                   title="Изменить поездку"
+                   aria-label="Изменить поездку"><i data-lucide="pencil"></i></a><a class="icon-button danger-text"
+   href="{% url 'visited_places:trip-delete' trip.id %}"
+   title="Удалить поездку"
+   aria-label="Удалить поездку"><i data-lucide="trash-2"></i></a>
+              {% endif %}
+            </td>
+          </tr>{% empty %}<tr><td colspan="5" class="empty-state">Поездок не найдено.</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% include "visited_places/partials/pagination.html" %}
+{% endblock %}

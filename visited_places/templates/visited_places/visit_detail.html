@@ -1,0 +1,29 @@
+{% extends "visited_places/base.html" %}
+{% load journal_display %}
+{% block content %}
+  <a class="back-link" href="{% url 'visited_places:journal' %}"><i data-lucide="arrow-left"></i>Журнал</a>
+  <div class="page-heading"><h1>{{ visit.place_name }}</h1><div class="actions"><a class="icon-button"
+   href="{% url 'visited_places:visit-edit' visit.id %}"
+   title="Изменить посещение"
+   aria-label="Изменить посещение"><i data-lucide="pencil"></i></a><a class="icon-button danger-text"
+   href="{% url 'visited_places:visit-delete' visit.id %}"
+   title="Удалить посещение"
+   aria-label="Удалить посещение"><i data-lucide="trash-2"></i></a></div></div>
+  <div class="detail-layout">
+    {% include "visited_places/partials/photo.html" with place=visit only %}
+    <dl>
+      <div><dt>Пользователь</dt><dd>{{ visit.user_name }}</dd></div>
+      <div>
+        <dt>Место</dt>
+        <dd><a href="{% url 'visited_places:place-detail' visit.place_id %}">{{ visit.place_name }}</a></dd>
+      </div>
+      <div>
+        <dt>Поездка</dt>
+        <dd><a href="{% url 'visited_places:trip-detail' visit.trip_id %}">{{ visit.trip_name }}</a></dd>
+      </div>
+      <div><dt>Дата посещения</dt><dd>{{ visit.visited_at|journal_date }} {{ visit.visited_at|journal_time }}</dd></div>
+      <div><dt>Оценка</dt><dd>{% if visit.rating %}{{ visit.rating }}/5{% else %}Без оценки{% endif %}</dd></div>
+      <div><dt>Заметка</dt><dd class="full-note">{{ visit.note|default:'Нет заметки' }}</dd></div>
+    </dl>
+  </div>
+{% endblock %}

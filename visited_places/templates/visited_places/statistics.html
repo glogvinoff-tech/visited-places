@@ -1,0 +1,56 @@
+{% extends "visited_places/base.html" %}
+{% block content %}
+  <div class="page-heading">
+    <h1>Моя статистика</h1>
+  </div>
+  <div class="metrics">
+    <div><i data-lucide="notebook-pen"></i><span>Посещений</span><strong>{{ summary.visits }}</strong></div>
+    <div><i data-lucide="map-pin"></i><span>Мест</span><strong>{{ summary.places }}</strong></div>
+    <div><i data-lucide="globe-2"></i><span>Стран</span><strong>{{ summary.countries }}</strong></div>
+    <div><i data-lucide="star"></i><span>Средняя оценка</span><strong>{{ summary.rating|default_if_none:'Нет' }}</strong></div>
+  </div>
+  <div class="statistics-grid">
+    <section>
+      <h2>Посещения по местам</h2>
+      <form method="get" class="statistics-filter">
+        <label for="minimum">Посещений не меньше</label><input id="minimum"
+       type="number"
+       min="1"
+       max="1000000"
+       name="minimum"
+       value="{{ minimum }}"><button class="icon-button" title="Применить" aria-label="Применить">
+          <i data-lucide="filter"></i>
+        </button>
+      </form>
+      <table class="statistics-table">
+        <thead><tr><th>Место</th><th>Посещений</th></tr></thead>
+        <tbody>
+          {% for place in by_place %}
+            <tr>
+              <td>
+                <a href="{% url 'visited_places:place-detail' place.id %}">{{ place.name }}</a>
+                <small>{{ place.city }}</small>
+              </td>
+              <td>{{ place.total }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="2" class="empty-state">Нет подходящих посещений.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Посещения по странам</h2>
+      <table class="statistics-table">
+        <thead><tr><th>Страна</th><th>Посещений</th></tr></thead>
+        <tbody>
+          {% for country in by_country %}
+            <tr><td>{{ country.country }}</td><td>{{ country.total }}</td></tr>
+          {% empty %}
+            <tr><td colspan="2" class="empty-state">Посещений пока нет.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+{% endblock %}

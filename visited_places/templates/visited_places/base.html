@@ -1,18 +1,37 @@
 {% load static %}
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="csrf-token" content="{{ csrf_token }}">
-  <title>{% block title %}Visited Places{% endblock %}</title>
-  <link rel="icon" href="{% static 'visited_places/images/red-square.jpg' %}" type="image/jpeg">
-  <link rel="stylesheet" href="{% static 'visited_places/app.css' %}">
-  <script src="{% static 'visited_places/vendor/lucide.min.js' %}" defer></script>
-  {% block scripts %}{% endblock %}
-</head>
-<body class="{% block body_class %}{% endblock %}">
-  {% block content %}{% endblock %}
-  <script src="{% static 'visited_places/base.js' %}" defer></script>
-</body>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="{% static 'visited_places/images/red-square.jpg' %}" type="image/jpeg">
+    <title>{% block title %}{{ title }} | Visited Places{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'visited_places/style.css' %}">
+    <script src="{% static 'visited_places/vendor/lucide.min.js' %}" defer></script>
+    <script src="{% static 'visited_places/main.js' %}" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="{% url 'visited_places:journal' %}"><i data-lucide="map-pin"></i>Visited Places</a>
+      {% if user %}
+        {% include "visited_places/partials/navigation.html" %}
+        <div class="account">
+          <a href="{% url 'visited_places:profile' %}"
+             class="profile-link"
+             title="Мой профиль"><i data-lucide="user-round"></i><span>{{ user.name }}</span></a>
+          <form method="post" action="{% url 'visited_places:logout' %}">
+            {% csrf_token %}
+            <button class="icon-button" title="Выйти" aria-label="Выйти">
+              <i data-lucide="log-out"></i>
+            </button>
+          </form>
+        </div>
+      {% endif %}
+    </header>
+    <main class="container">
+      {% for message in messages %}<p class="notice" role="status">{{ message }}</p>{% endfor %}
+      {% block content %}{% endblock %}
+    </main>
+    <footer class="site-footer"><span>Логвинов Глеб Дмитриевич · ЭФБО-14-24</span><a href="{% static 'visited_places/images/credits.json' %}">Фото и лицензии</a></footer>
+  </body>
 </html>

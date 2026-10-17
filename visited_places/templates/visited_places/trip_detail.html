@@ -1,0 +1,36 @@
+{% extends "visited_places/base.html" %}
+{% load journal_display %}
+{% block content %}
+  <a class="back-link" href="{% url 'visited_places:trips' %}"><i data-lucide="arrow-left"></i>Поездки</a>
+  <div class="page-heading"><h1>{{ trip.name }}</h1>{% if user.is_staff %}<div class="actions"><a class="icon-button"
+   href="{% url 'visited_places:trip-edit' trip.id %}"
+   title="Изменить поездку"
+   aria-label="Изменить поездку"><i data-lucide="pencil"></i></a><a class="icon-button danger-text"
+   href="{% url 'visited_places:trip-delete' trip.id %}"
+   title="Удалить поездку"
+   aria-label="Удалить поездку"><i data-lucide="trash-2"></i></a></div>{% endif %}</div>
+  <div class="detail-layout">
+    {% include "visited_places/partials/photo.html" with place=trip only %}
+    <dl>
+      <div>
+        <dt>Место</dt>
+        <dd><a href="{% url 'visited_places:place-detail' trip.place_id %}">{{ trip.place_name }}</a></dd>
+      </div>
+      <div><dt>Город и страна</dt><dd>{{ trip.city }}, {{ trip.country }}</dd></div>
+      <div><dt>Начало</dt><dd>{{ trip.start_date|journal_date }}</dd></div>
+      <div><dt>Окончание</dt><dd>{{ trip.end_date|journal_date }}</dd></div>
+      <div><dt>Мои посещения</dt><dd>{{ visits|length }}</dd></div>
+    </dl>
+  </div>
+  <section class="related-visits">
+    <h2>Мои посещения в этой поездке</h2>
+    {% for visit in visits %}
+      <p>
+        <a href="{% url 'visited_places:visit-detail' visit.id %}">{{ visit.visited_at|journal_date }} {{ visit.visited_at|journal_time }}</a>
+        {% if visit.rating %} · {{ visit.rating }}/5{% endif %}
+      </p>
+    {% empty %}
+      <p class="muted">В этой поездке пока нет твоих отметок.</p>
+    {% endfor %}
+  </section>
+{% endblock %}

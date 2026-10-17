@@ -1,0 +1,68 @@
+{% extends "visited_places/base.html" %}
+{% load journal_display %}
+{% block content %}
+  <div class="page-heading"><h1>Журнал посещений</h1><a class="button"
+   href="{% url 'visited_places:visit-create' %}"><i data-lucide="plus"></i>Добавить посещение</a></div>
+  <form method="get" class="filters visit-filters">
+    <label class="search-label">
+      <span>Поиск</span><input type="search"
+       name="q"
+       value="{{ q }}"
+       placeholder="Место, поездка или заметка">
+    </label>
+    <label><span>Поездка</span><select name="trip"><option value="">Все поездки</option>{% for trip in trips %}<option value="{{ trip.id }}"
+        {% if trip.id|stringformat:'s' == selected_trip %}selected{% endif %}>{{ trip.name }}</option>{% endfor %}</select></label>
+    <label>
+      <span>С даты</span><input type="date"
+       name="from"
+       value="{{ from }}"></label><label><span>По дату</span><input type="date"
+       name="to"
+       value="{{ to }}">
+      </label>
+      <button class="icon-button filter-submit" title="Найти" aria-label="Найти">
+        <i data-lucide="search"></i>
+      </button>
+      <a class="icon-button filter-submit"
+         href="{% url 'visited_places:journal' %}"
+         title="Сбросить фильтры"
+         aria-label="Сбросить фильтры"><i data-lucide="rotate-ccw"></i></a>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Место</th>
+            <th>Дата</th>
+            <th>Поездка</th>
+            <th>Оценка</th>
+            <th>Заметка</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for visit in visits %}
+            <tr>
+              <td><a class="record-title"
+   href="{% url 'visited_places:visit-detail' visit.id %}">{{ visit.place_name }}</a><small>{{ visit.city }}, {{ visit.country }}</small></td>
+              <td data-label="Дата">
+                <div>{{ visit.visited_at|journal_date }}<small>{{ visit.visited_at|journal_time }}</small></div>
+              </td>
+              <td data-label="Поездка"><a href="{% url 'visited_places:trip-detail' visit.trip_id %}">{{ visit.trip_name }}</a></td>
+              <td data-label="Оценка">{% if visit.rating %}<span class="rating"><i data-lucide="star"></i>{{ visit.rating }}/5</span>{% else %}<span class="muted">Без оценки</span>{% endif %}</td>
+              <td data-label="Заметка">
+                <div class="note-preview">{{ visit.note|default:'Нет заметки' }}</div>
+              </td>
+              <td class="row-actions">
+                <a class="icon-button"
+                   href="{% url 'visited_places:visit-edit' visit.id %}"
+                   title="Изменить посещение"
+                   aria-label="Изменить посещение"><i data-lucide="pencil"></i></a><a class="icon-button danger-text"
+   href="{% url 'visited_places:visit-delete' visit.id %}"
+   title="Удалить посещение"
+   aria-label="Удалить посещение"><i data-lucide="trash-2"></i></a>
+              </td>
+            </tr>{% empty %}<tr><td colspan="6" class="empty-state">Посещений не найдено.</td></tr>{% endfor %}</tbody>
+        </table>
+      </div>
+      {% include "visited_places/partials/pagination.html" %}
+{% endblock %}

@@ -1,5 +1,13 @@
-{% if photo.image %}
-<img class="{{ photo_class }}" src="{{ photo.image }}" alt="{{ photo.name }}" loading="lazy" data-place-photo {% if photo.credit and photo.credit.height > photo.credit.width and photo_class != 'table-photo' %}style="object-fit: contain"{% endif %}>
-{% else %}
-<div class="{{ photo_class }} photo-placeholder"><i data-lucide="map-pin" aria-hidden="true"></i></div>
-{% endif %}
+{% load journal_display %}
+{% with image=place|place_image %}
+  <div class="photo-wrap">
+    {% if image %}
+      <img src="{{ image }}"
+           alt="{% if place.place_name %}{{ place.place_name }}{% else %}{{ place.name }}{% endif %}"
+           class="place-photo"
+           loading="lazy"
+           data-photo>
+    {% endif %}
+    <span class="photo-placeholder" {% if image %}hidden{% endif %}><i data-lucide="landmark"></i></span>
+  </div>
+{% endwith %}

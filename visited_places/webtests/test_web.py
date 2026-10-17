@@ -1,795 +1,404 @@
-import json
-from datetime import date, datetime
-from io import StringIO
+import os
+import tempfile
+from datetime import datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from django.core.cache import caches
-from django.core.exceptions import ValidationError
-from django.core.management import call_command
-from django.db import IntegrityError, connection, transaction
-from django.db.models.deletion import ProtectedError
-from django.test import Client, SimpleTestCase, TestCase, override_settings
-from django.test.utils import CaptureQueriesContext
+from django.contrib.auth.hashers import check_password, make_password
+from django.test import Client, SimpleTestCase, override_settings
 from django.urls import reverse
-from django.utils import timezone
 
-from visited_places.models import Place, Trip, User, Visit
-
-
-def timestamp(day=10, hour=12):
-    return timezone.make_aware(datetime(2026, 6, day, hour))
+from db.database import execute, fetch_all, fetch_one
+from db.import_json import import_json
 
 
-@override_settings(
-    STORAGES={
-        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
-        "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"
-        },
-    }
-)
-class WebFixture(TestCase):
-    @classmethod
-    def setUpTestData(cls):
-        cls.staff = User.objects.create_user(
-            "admin",
-            "admin@example.com",
-            "Test-Password-731!",
-            name="Администратор",
-            is_staff=True,
-        )
-        cls.user = User.objects.create_user(
-            "traveller",
-            "user@example.com",
-            "Test-Password-731!",
-            name="Путешественник",
-        )
-        cls.other = User.objects.create_user(
-            "other",
-            "other@example.com",
-            "Test-Password-731!",
-            name="Другой пользователь",
-        )
-        cls.place = Place.objects.create(
-            name="Красная площадь",
-            city="Москва",
-            country="Россия",
-            category="Площадь",
-        )
-        cls.trip = Trip.objects.create(
-            place=cls.place,
-            name="Москва в июне",
-            start_date=date(2026, 6, 10),
-            end_date=date(2026, 6, 12),
-        )
-        cls.visit = Visit.objects.create(
-            user=cls.user,
-            trip=cls.trip,
-            visited_at=timestamp(),
-            rating=4,
-            note="Моя заметка",
-        )
-        cls.foreign_visit = Visit.objects.create(
-            user=cls.other,
-            trip=cls.trip,
-            visited_at=timestamp(),
-            rating=5,
-            note="Чужая заметка",
-        )
-
+@override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
+class WebTests(SimpleTestCase):
     def setUp(self):
-        caches["default"].clear()
-        caches["statistics"].clear()
-        self.client.force_login(self.user)
-
-    def send(self, method, url, payload):
-        return getattr(self.client, method)(
-            url,
-            json.dumps(payload),
-            content_type="application/json",
-        )
-
-
-class ModelTests(WebFixture):
-    def test_relations_are_user_visit_trip_place(self):
-        self.assertNotIn("user", [field.name for field in Trip._meta.fields])
-        self.assertIn("place", [field.name for field in Trip._meta.fields])
-        self.assertNotIn("place", [field.name for field in Visit._meta.fields])
-        self.assertEqual(self.visit.trip.place, self.place)
-
-    def test_unicode_place_duplicates_are_rejected(self):
-        with self.assertRaises(ValidationError):
-            Place.objects.create(
-                name=" красная ПЛОЩАДЬ ",
-                city="МОСКВА",
-                country="россия",
-                category="Парк",
-            )
-
-    def test_rating_range_is_enforced_by_model_and_database(self):
-        with self.assertRaises(ValidationError):
-            Visit.objects.create(
-                user=self.user, trip=self.trip, visited_at=timestamp(11), rating=6
-            )
-        with self.assertRaises(IntegrityError), transaction.atomic():
-            Visit.objects.filter(pk=self.visit.pk).update(rating=0)
-
-    def test_trip_dates_are_enforced_by_model_and_database(self):
-        self.trip.end_date = date(2026, 6, 9)
-        with self.assertRaises(ValidationError):
-            self.trip.save()
-        with self.assertRaises(IntegrityError), transaction.atomic():
-            Trip.objects.filter(pk=self.trip.pk).update(end_date=date(2026, 6, 9))
-
-    def test_visit_local_date_must_fit_trip(self):
-        with self.assertRaises(ValidationError):
-            Visit.objects.create(
-                user=self.user, trip=self.trip, visited_at=timestamp(13)
-            )
-        visit = Visit.objects.create(
-            user=self.user, trip=self.trip, visited_at=timestamp(10, 0)
-        )
-        self.assertEqual(
-            timezone.localtime(visit.visited_at).date(), self.trip.start_date
-        )
-
-    def test_trip_cannot_exclude_existing_visits(self):
-        self.trip.start_date = date(2026, 6, 11)
-        with self.assertRaises(ValidationError):
-            self.trip.save()
-        self.trip.refresh_from_db()
-        self.assertEqual(self.trip.start_date, date(2026, 6, 10))
-
-    def test_place_and_trip_deletion_are_protected(self):
-        with self.assertRaises(ProtectedError):
-            self.place.delete()
-        with self.assertRaises(ProtectedError):
-            self.trip.delete()
-        self.assertEqual(Visit.objects.count(), 2)
-
-    def test_user_deletion_preserves_shared_resources_and_other_visits(self):
-        self.user.delete()
-        self.assertEqual(Place.objects.count(), 1)
-        self.assertEqual(Trip.objects.count(), 1)
-        self.assertEqual(Visit.objects.count(), 1)
-
-    def test_password_is_hashed_and_email_is_normalized(self):
-        user = User.objects.create_user(
-            "fresh", " FRESH@EXAMPLE.COM ", "Strong-Password-781!", name="Имя"
-        )
-        self.assertEqual(user.email, "fresh@example.com")
-        self.assertNotEqual(user.password, "Strong-Password-781!")
-        self.assertTrue(user.check_password("Strong-Password-781!"))
-
-    def test_unsafe_image_scheme_is_rejected(self):
-        self.place.image_url = "javascript:alert(1)"
-        with self.assertRaises(ValidationError):
-            self.place.save()
-
-
-class ApiTests(WebFixture):
-    def test_anonymous_requests_are_denied(self):
-        self.client.logout()
-        for url in (
-            "/api/me/",
-            "/api/places/",
-            "/api/trips/",
-            "/api/visits/",
-            "/api/statistics/",
-        ):
-            with self.subTest(url=url):
-                self.assertEqual(self.client.get(url).status_code, 401)
-
-    def test_private_visit_list_does_not_include_other_user_data(self):
-        data = self.client.get("/api/visits/").json()
-        self.assertEqual(data["count"], 1)
-        self.assertEqual(data["results"][0]["note"], "Моя заметка")
-        self.assertNotIn("Чужая заметка", json.dumps(data, ensure_ascii=False))
-
-    def test_foreign_visit_cannot_be_read_changed_or_deleted(self):
-        url = f"/api/visits/{self.foreign_visit.pk}/"
-        self.assertEqual(self.client.get(url).status_code, 404)
-        self.assertEqual(self.send("patch", url, {"note": "Взлом"}).status_code, 404)
-        self.assertEqual(self.client.delete(url).status_code, 404)
-        self.foreign_visit.refresh_from_db()
-        self.assertEqual(self.foreign_visit.note, "Чужая заметка")
-
-    def test_unicode_note_search_is_case_insensitive_and_private(self):
-        data = self.client.get("/api/visits/", {"q": "моя ЗАМЕТКА"}).json()
-        self.assertEqual(data["count"], 1)
-        self.assertEqual(data["results"][0]["id"], self.visit.pk)
-        foreign = self.client.get("/api/visits/", {"q": "чужая"}).json()
-        self.assertEqual(foreign["count"], 0)
-
-    def test_staff_api_still_only_returns_own_visits(self):
-        self.client.force_login(self.staff)
-        self.assertEqual(self.client.get("/api/visits/").json()["count"], 0)
-        self.assertEqual(
-            self.client.get(f"/api/visits/{self.visit.pk}/").status_code, 404
-        )
-
-    def test_client_cannot_choose_visit_owner(self):
-        response = self.send(
-            "post",
-            "/api/visits/",
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        environment = patch.dict(
+            os.environ,
             {
-                "user": self.other.pk,
-                "trip": self.trip.pk,
-                "visited_at": "2026-06-11T12:00",
-                "rating": 5,
+                "VISITED_PLACES_DB": str(Path(directory.name) / "test.sqlite3"),
             },
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(Visit.objects.count(), 2)
+        environment.start()
+        self.addCleanup(environment.stop)
+        import_json()
+        execute(
+            "UPDATE users SET password = ?, is_staff = 1 WHERE id = 1",
+            (make_password("Test-Travel-2026!"),),
+        )
+        execute(
+            "UPDATE users SET password = ? WHERE id = 2",
+            (make_password("Test-Travel-2026!"),),
+        )
+        self.client = Client()
+        self.login()
 
-    def test_visit_create_patch_delete_and_statistics_invalidation(self):
-        self.assertEqual(self.client.get("/api/statistics/").json()["visits"], 1)
-        with self.captureOnCommitCallbacks(execute=True):
-            response = self.send(
-                "post",
-                "/api/visits/",
-                {
-                    "trip": self.trip.pk,
-                    "visited_at": "2026-06-11T12:00",
-                    "rating": 5,
-                    "note": "Новая заметка",
-                },
+    def login(self, username="gleb", client=None):
+        client = client or self.client
+        client.post("/logout/")
+        return client.post(
+            reverse("visited_places:login"),
+            {
+                "username": username,
+                "password": "Test-Travel-2026!",
+            },
+        )
+
+    def test_anonymous_redirect(self):
+        client = Client()
+        for url in ["/", "/places/", "/trips/", "/statistics/", "/visits/1/"]:
+            self.assertRedirects(
+                client.get(url), "/login/", fetch_redirect_response=False
             )
-        self.assertEqual(response.status_code, 201)
-        url = f"/api/visits/{response.json()['id']}/"
-        totals = self.client.get("/api/statistics/").json()
-        self.assertEqual(totals["visits"], 2)
-        self.assertEqual(totals["average_rating"], 4.5)
-        with self.captureOnCommitCallbacks(execute=True):
-            changed = self.send("patch", url, {"rating": None, "note": "Изменено"})
-        self.assertEqual(changed.json()["rating"], None)
-        self.assertEqual(changed.json()["note"], "Изменено")
-        with self.captureOnCommitCallbacks(execute=True):
-            self.assertEqual(self.client.delete(url).status_code, 200)
-        self.assertEqual(self.client.get("/api/statistics/").json()["visits"], 1)
 
-    def test_duplicate_visit_is_rejected(self):
-        response = self.send(
-            "post",
-            "/api/visits/",
-            {
-                "trip": self.trip.pk,
-                "visited_at": "2026-06-10T12:00",
-            },
-        )
-        self.assertEqual(response.status_code, 400)
+    def test_login_and_wrong_password(self):
+        client = Client()
+        response = client.post("/login/", {"username": "gleb", "password": "wrong"})
+        self.assertContains(response, "Неверный логин или пароль")
+        self.assertNotIn("user_id", client.session)
+        self.login(client=client)
+        self.assertEqual(client.session["user_id"], 1)
 
-    def test_invalid_date_does_not_change_an_existing_visit(self):
-        response = self.send(
-            "patch",
-            f"/api/visits/{self.visit.pk}/",
-            {
-                "visited_at": "2026-06-13T12:00",
-                "note": "Неверная дата",
-            },
-        )
-        self.assertEqual(response.status_code, 400)
-        self.visit.refresh_from_db()
-        self.assertEqual(self.visit.note, "Моя заметка")
-
-    def test_invalid_json_and_typed_values_have_400_responses(self):
-        self.assertEqual(
-            self.client.post(
-                "/api/places/", "{", content_type="application/json"
-            ).status_code,
-            400,
-        )
-        self.assertEqual(
-            self.client.post(
-                "/api/places/", "[]", content_type="application/json"
-            ).status_code,
-            400,
-        )
-        self.assertEqual(self.client.post("/api/places/", {}).status_code, 400)
-        for payload in (
-            {"visited_at": 1},
-            {"trip": True},
-            {"rating": True},
-            {"note": {"a": 1}},
-        ):
-            with self.subTest(payload=payload):
-                self.assertEqual(
-                    self.send(
-                        "patch", f"/api/visits/{self.visit.pk}/", payload
-                    ).status_code,
-                    400,
-                )
-
-    def test_csrf_is_required_on_api_writes(self):
-        client = Client(enforce_csrf_checks=True)
-        client.force_login(self.user)
-        self.assertEqual(
-            client.post(
-                "/api/places/", "{}", content_type="application/json"
-            ).status_code,
-            403,
-        )
-
-    def test_regular_user_cannot_edit_or_delete_shared_catalog(self):
-        for resource, record in (("places", self.place), ("trips", self.trip)):
-            url = f"/api/{resource}/{record.pk}/"
-            with self.subTest(resource=resource):
-                self.assertEqual(
-                    self.send("patch", url, {"name": "Нельзя"}).status_code, 403
-                )
-                self.assertEqual(self.client.delete(url).status_code, 403)
-
-    def test_staff_can_edit_catalog_but_cannot_delete_used_resources(self):
-        self.client.force_login(self.staff)
-        url = f"/api/places/{self.place.pk}/"
-        self.assertEqual(
-            self.send("patch", url, {"name": "Новая площадь"}).status_code, 200
-        )
-        self.assertEqual(self.client.delete(url).status_code, 409)
-        self.assertEqual(
-            self.client.delete(f"/api/trips/{self.trip.pk}/").status_code, 409
-        )
-
-    def test_regular_user_can_create_place_and_trip_without_an_owner_field(self):
-        place = self.send(
-            "post",
-            "/api/places/",
-            {
-                "name": "Музей",
-                "city": "Казань",
-                "country": "Россия",
-                "category": "Музей",
-            },
-        )
-        self.assertEqual(place.status_code, 201)
-        trip = self.send(
-            "post",
-            "/api/trips/",
-            {
-                "place": place.json()["id"],
-                "name": "Казань",
-                "start_date": "2026-07-01",
-                "end_date": "2026-07-03",
-            },
-        )
-        self.assertEqual(trip.status_code, 201)
-        self.assertNotIn("user", trip.json())
-
-    def test_unicode_search_and_pagination(self):
-        response = self.client.get("/api/places/", {"q": "МОСКВА", "page_size": 1})
-        self.assertEqual(response.json()["count"], 1)
-        self.assertEqual(
-            self.client.get("/api/trips/", {"q": "москва"}).json()["count"], 1
-        )
-        self.assertEqual(
-            self.client.get("/api/places/", {"page_size": 201}).status_code, 400
-        )
-        self.assertEqual(self.client.get("/api/places/", {"page": -1}).status_code, 400)
-        self.assertEqual(
-            self.client.get("/api/places/", {"q": "' OR 1=1 --"}).json()["count"], 0
-        )
-
-    def test_trip_pagination_has_stable_newest_first_order(self):
-        newer = Trip.objects.create(
-            place=self.place,
-            name="Поздняя поездка",
-            start_date=date(2026, 7, 1),
-            end_date=date(2026, 7, 3),
-        )
-        first = self.client.get("/api/trips/", {"page_size": 1}).json()
-        second = self.client.get("/api/trips/", {"page_size": 1, "page": 2}).json()
-        self.assertEqual(first["results"][0]["id"], newer.pk)
-        self.assertEqual(second["results"][0]["id"], self.trip.pk)
-
-    def test_private_statistics_cache_is_not_shared_between_users(self):
-        self.assertEqual(
-            self.client.get("/api/statistics/").json()["average_rating"], 4
-        )
-        self.client.force_login(self.other)
-        self.assertEqual(
-            self.client.get("/api/statistics/").json()["average_rating"], 5
-        )
-
-    def test_statistics_cache_reduces_queries(self):
-        self.client.get("/api/statistics/")
-        with CaptureQueriesContext(connection) as queries:
-            response = self.client.get("/api/statistics/")
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(
-            any("visited_places_visit" in entry["sql"] for entry in queries)
-        )
-
-    def test_statistics_normalizes_countries_and_keeps_distinct_places(self):
-        for name, country in (
-            ("Смотровая", "РОССИЯ"),
-            (self.place.name, "Другая страна"),
-        ):
-            place = Place.objects.create(
-                name=name, city=self.place.city, country=country, category="Площадь"
-            )
-            trip = Trip.objects.create(
-                place=place,
-                name=name,
-                start_date=self.trip.start_date,
-                end_date=self.trip.end_date,
-            )
-            Visit.objects.create(user=self.user, trip=trip, visited_at=timestamp())
-        data = self.client.get("/api/statistics/").json()
-        self.assertEqual(data["countries"], 2)
-        countries = {
-            item["name"].casefold(): item["count"] for item in data["by_country"]
-        }
-        self.assertEqual(countries, {"россия": 2, "другая страна": 1})
-        self.assertEqual(len(data["top_places"]), 3)
-        self.assertTrue(all(item["count"] == 1 for item in data["top_places"]))
-
-    def test_visit_list_does_not_make_queries_per_row(self):
-        for hour in range(1, 12):
-            Visit.objects.create(
-                user=self.user, trip=self.trip, visited_at=timestamp(11, hour)
-            )
-        with CaptureQueriesContext(connection) as queries:
-            response = self.client.get("/api/visits/", {"page_size": 20})
-        self.assertEqual(response.json()["count"], 12)
-        self.assertLessEqual(len(queries), 5)
-
-    def test_user_cannot_change_privileges_through_profile(self):
-        response = self.send("patch", "/api/me/", {"is_staff": True})
-        self.assertEqual(response.status_code, 400)
-        self.user.refresh_from_db()
-        self.assertFalse(self.user.is_staff)
-
-    def test_profile_updates_name_and_email(self):
-        response = self.send(
-            "patch", "/api/me/", {"name": "Новое имя", "email": " NEW@EXAMPLE.COM "}
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["email"], "new@example.com")
-
-    def test_date_filters_and_bad_parameters(self):
-        self.assertEqual(
-            self.client.get("/api/visits/", {"from": "2026-06-11"}).json()["count"], 0
-        )
-        self.assertEqual(
-            self.client.get("/api/visits/", {"from": "bad-date"}).status_code, 400
-        )
-        self.assertEqual(
-            self.client.get("/api/visits/", {"trip": "bad-id"}).status_code, 400
-        )
-
-
-class AuthTests(WebFixture):
-    def test_anonymous_pages_redirect_to_login(self):
-        self.client.logout()
-        for url in ("/", "/places/", "/trips/", "/statistics/"):
-            self.assertEqual(self.client.get(url).status_code, 302)
-
-    def test_login_and_post_logout(self):
-        self.client.logout()
-        response = self.client.post(
-            "/login/", {"username": "traveller", "password": "Test-Password-731!"}
-        )
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(self.client.get("/api/me/").status_code, 200)
-        self.assertEqual(self.client.get("/logout/").status_code, 405)
-        self.assertEqual(self.client.post("/logout/").status_code, 302)
-        self.assertEqual(self.client.get("/api/me/").status_code, 401)
-
-    def test_registration_uses_hashes_and_does_not_grant_staff_permissions(self):
-        self.client.logout()
-        response = self.client.post(
-            "/register/",
-            {
-                "username": "newcomer",
-                "name": "Новичок",
-                "email": "newcomer@example.com",
-                "password1": "Unique-Password-721!",
-                "password2": "Unique-Password-721!",
-            },
-        )
-        self.assertEqual(response.status_code, 302)
-        user = User.objects.get(username="newcomer")
-        self.assertTrue(user.check_password("Unique-Password-721!"))
-        self.assertFalse(user.is_staff)
-        self.assertFalse(user.is_superuser)
-
-    def test_repeated_failed_logins_are_throttled(self):
-        self.client.logout()
-        for _ in range(10):
-            self.client.post("/login/", {"username": "missing", "password": "wrong"})
-        response = self.client.post(
+    def test_unknown_login(self):
+        response = Client().post(
             "/login/", {"username": "missing", "password": "wrong"}
         )
-        self.assertEqual(response.status_code, 429)
+        self.assertContains(response, "Неверный логин или пароль")
 
-    def test_all_app_pages_render_without_exposing_foreign_notes(self):
-        for url in ("/", "/places/", "/trips/", "/statistics/"):
-            response = self.client.get(url)
-            self.assertEqual(response.status_code, 200)
-            self.assertNotContains(response, "Чужая заметка")
-
-    def test_login_redirect_cannot_leave_the_application(self):
-        self.client.logout()
-        response = self.client.post(
-            "/login/?next=https://example.com/",
+    def test_registration(self):
+        client = Client()
+        response = client.post(
+            "/register/",
             {
-                "username": "traveller",
-                "password": "Test-Password-731!",
+                "username": "new_user",
+                "name": "Новый пользователь",
+                "email": "NEW@example.com",
+                "password1": "New-Travel-2026!",
+                "password2": "New-Travel-2026!",
+                "is_staff": 1,
             },
         )
-        self.assertEqual(response.url, "/")
+        self.assertEqual(response.status_code, 302)
+        user = fetch_one("SELECT * FROM users WHERE username = ?", ("new_user",))
+        self.assertTrue(check_password("New-Travel-2026!", user["password"]))
+        self.assertEqual(user["email"], "new@example.com")
+        self.assertEqual(user["is_staff"], 0)
+        self.assertEqual(client.session["user_id"], user["id"])
 
-
-class TemplateTests(WebFixture):
-    def test_journal_contains_private_records_in_initial_html(self):
-        response = self.client.get("/")
-        self.assertContains(response, "Моя заметка")
-        self.assertNotContains(response, "Чужая заметка")
-        self.assertContains(response, 'aria-busy="false"')
-        self.assertEqual(response.context["initial_data"]["count"], 1)
-
-    def test_pages_use_base_and_individual_content_templates(self):
-        for url, name in (
-            ("/", "visits"),
-            ("/places/", "places"),
-            ("/trips/", "trips"),
-            ("/statistics/", "statistics"),
-        ):
-            with self.subTest(url=url):
-                response = self.client.get(url)
-                self.assertTemplateUsed(response, "visited_places/base.html")
-                self.assertTemplateUsed(response, "visited_places/app.html")
-                self.assertTemplateUsed(
-                    response, f"visited_places/partials/{name}.html"
-                )
-
-    def test_html_and_api_share_unicode_search_results(self):
-        for page, api, query in (
-            ("/", "/api/visits/", "моя ЗАМЕТКА"),
-            ("/places/", "/api/places/", "МОСКВА"),
-            ("/trips/", "/api/trips/", "москва"),
-        ):
-            with self.subTest(page=page):
-                html = self.client.get(page, {"q": query})
-                data = self.client.get(api, {"q": query}).json()
-                self.assertEqual(html.context["initial_data"], data)
-
-    def test_server_pagination_preserves_page_size(self):
-        for hour in range(1, 14):
-            Visit.objects.create(
-                user=self.user, trip=self.trip, visited_at=timestamp(11, hour)
-            )
-        parameters = {"page": 2, "page_size": 1}
-        response = self.client.get("/", parameters)
-        self.assertEqual(
-            response.context["initial_data"],
-            self.client.get("/api/visits/", parameters).json(),
+    def test_duplicate_registration(self):
+        response = Client().post(
+            "/register/",
+            {
+                "username": "GLEB",
+                "name": "Name",
+                "email": "ALEXEY@EXAMPLE.COM",
+                "password1": "New-Travel-2026!",
+                "password2": "New-Travel-2026!",
+            },
         )
-        self.assertEqual(len(response.context["records"]), 1)
-        self.assertContains(response, 'name="page_size" value="1"')
-        self.assertContains(response, 'form="filters-form" name="page" value="3"')
+        self.assertContains(response, "уже используется")
+        self.assertEqual(fetch_one("SELECT COUNT(*) FROM users")[0], 3)
 
-    def test_invalid_parameters_show_error_instead_of_a_server_exception(self):
-        for parameters in (
-            {"page": "bad"},
-            {"page_size": 0},
-            {"from": "bad-date"},
-            {"trip": "bad-id"},
-        ):
-            with self.subTest(parameters=parameters):
-                response = self.client.get("/", parameters)
-                self.assertEqual(response.status_code, 400)
-                self.assertTrue(response.context["initial_data"]["error"])
-                self.assertEqual(response.context["records"], [])
-
-    def test_regular_user_does_not_see_shared_catalog_edit_buttons(self):
-        for url in ("/places/", "/trips/"):
-            response = self.client.get(url)
-            self.assertNotContains(response, 'data-record-action="edit"')
-            self.assertNotContains(response, 'data-record-action="delete"')
-
-    def test_staff_sees_shared_catalog_edit_buttons(self):
-        self.client.force_login(self.staff)
-        for url in ("/places/", "/trips/"):
-            response = self.client.get(url)
-            self.assertContains(response, 'data-record-action="edit"')
-            self.assertContains(response, 'data-record-action="delete"')
-
-    def test_own_visit_edit_buttons_exist_in_initial_html(self):
-        response = self.client.get("/")
-        self.assertContains(response, 'data-resource="visits"')
-        self.assertContains(response, f'data-record-id="{self.visit.pk}"')
-        self.assertNotContains(response, f'data-record-id="{self.foreign_visit.pk}"')
-
-    def test_html_escapes_untrusted_notes_and_place_names(self):
-        attack = '<script>alert("test")</script>'
-        self.visit.note = attack
-        self.visit.save()
-        self.place.name = attack
-        self.place.save()
-        for url in ("/", "/places/"):
-            response = self.client.get(url)
-            self.assertNotContains(response, attack)
-            self.assertContains(response, "&lt;script&gt;")
-
-    def test_json_script_does_not_allow_notes_to_close_the_script(self):
-        self.visit.note = "</script><script>alert(1)</script>"
-        self.visit.save()
-        response = self.client.get("/")
-        self.assertNotContains(response, "</script><script>alert(1)")
-        self.assertContains(response, "\\u003C/script\\u003E")
-        self.assertEqual(
-            response.context["initial_data"]["results"][0]["note"], self.visit.note
+    def test_weak_password(self):
+        response = Client().post(
+            "/register/",
+            {
+                "username": "new",
+                "name": "Name",
+                "email": "new@example.com",
+                "password1": "123",
+                "password2": "123",
+            },
         )
+        self.assertTrue(response.context["form"].errors)
+        self.assertEqual(fetch_one("SELECT COUNT(*) FROM users")[0], 3)
 
-    def test_empty_catalog_uses_empty_templates(self):
-        Visit.objects.all().delete()
-        Trip.objects.all().delete()
-        Place.objects.all().delete()
-        for url in ("/places/", "/trips/"):
-            response = self.client.get(url)
-            self.assertContains(response, "Записей не найдено")
-            self.assertTemplateUsed(response, "visited_places/partials/empty.html")
+    def test_profile(self):
+        response = self.client.post(
+            "/profile/", {"name": "Глеб", "email": "gleb@example.com"}
+        )
+        self.assertRedirects(response, "/profile/")
+        self.assertEqual(fetch_one("SELECT name FROM users WHERE id = 1")[0], "Глеб")
 
-    def test_empty_own_statistics_does_not_include_foreign_visits(self):
-        Visit.objects.filter(user=self.user).delete()
-        response = self.client.get("/statistics/")
-        self.assertContains(response, "Посещений пока нет")
-        self.assertEqual(response.context["stats"]["visits"], 0)
+    def test_logout_only_post(self):
+        self.assertEqual(self.client.get("/logout/").status_code, 405)
+        self.assertRedirects(self.client.post("/logout/"), "/login/")
+        self.assertNotIn("user_id", self.client.session)
 
-    def test_statistics_and_rating_are_present_in_initial_html(self):
-        response = self.client.get("/statistics/")
-        self.assertContains(response, "Посещения по странам")
-        self.assertContains(response, "Красная площадь")
-        self.assertContains(response, 'data-metric="average_rating">4.00</strong>')
-        self.assertEqual(response.context["stats"]["visits"], 1)
+    def test_csrf(self):
+        client = Client(enforce_csrf_checks=True)
+        client.get("/login/")
+        self.assertEqual(client.post("/login/", {"username": "gleb"}).status_code, 403)
 
-    def test_html_does_not_make_queries_for_each_record(self):
-        for hour in range(1, 12):
-            Visit.objects.create(
-                user=self.user, trip=self.trip, visited_at=timestamp(11, hour)
+    def test_session_tampering(self):
+        self.client.cookies["visited_places_session"] = "forged-user-id-1"
+        self.assertEqual(self.client.get("/").status_code, 302)
+
+    def test_inactive_account(self):
+        execute("UPDATE users SET is_active = 0 WHERE id = 1")
+        self.assertEqual(self.client.get("/").status_code, 302)
+
+    def test_lists_contain_database_records(self):
+        response = self.client.get("/")
+        self.assertEqual(len(response.context["visits"]), 4)
+        self.assertContains(response, "Журнал посещений")
+        self.assertEqual(len(self.client.get("/places/").context["places"]), 6)
+        self.assertEqual(len(self.client.get("/trips/").context["trips"]), 6)
+
+    def test_unicode_search_and_sql_injection(self):
+        response = self.client.get("/places/", {"q": "МОСКВА"})
+        self.assertEqual(len(response.context["places"]), 2)
+        response = self.client.get("/places/", {"q": "' OR 1=1 --"})
+        self.assertEqual(len(response.context["places"]), 0)
+
+    def test_unvisited_places(self):
+        response = self.client.get("/places/", {"unvisited": "1"})
+        self.assertEqual({p["id"] for p in response.context["places"]}, {5, 6})
+
+    def test_trip_date_filter(self):
+        response = self.client.get("/trips/", {"date": "2026-06-11"})
+        self.assertEqual({t["id"] for t in response.context["trips"]}, {1, 4})
+
+    def test_visit_filters(self):
+        response = self.client.get("/", {"from": "2026-07-01", "to": "2026-07-01"})
+        self.assertEqual([v["id"] for v in response.context["visits"]], [3])
+        self.assertEqual(len(self.client.get("/", {"trip": "1"}).context["visits"]), 1)
+
+    def test_pagination(self):
+        for number in range(15):
+            execute(
+                "INSERT INTO places(name, city, country, category) VALUES (?, ?, ?, ?)",
+                (f"Test {number}", "City", "Country", "Test"),
             )
-        self.client.get("/api/statistics/")
-        with CaptureQueriesContext(connection) as queries:
-            response = self.client.get("/")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.context["records"]), 12)
-        self.assertLessEqual(len(queries), 6)
+        response = self.client.get("/places/", {"q": "Test", "page": 2})
+        self.assertEqual(len(response.context["places"]), 3)
+        self.assertEqual(response.context["page"]["total"], 15)
+        self.assertContains(response, "q=Test&amp;page=1")
+        self.assertEqual(self.client.get("/places/", {"page": "bad"}).status_code, 200)
 
-    def test_date_and_trip_filters_remain_selected_in_html(self):
-        parameters = {
-            "trip": str(self.trip.pk),
-            "from": "2026-06-10",
-            "to": "2026-06-10",
+    def test_detail_pages(self):
+        for url, text in [
+            ("/places/1/", "Красная площадь"),
+            ("/trips/1/", "Выходные в Москве"),
+            ("/visits/1/", "Прогулка по историческому центру."),
+        ]:
+            self.assertContains(self.client.get(url), text)
+
+    def test_private_visits_even_for_staff(self):
+        for url in ["/visits/5/", "/visits/5/edit/", "/visits/5/delete/"]:
+            self.assertEqual(self.client.get(url).status_code, 404)
+            self.assertEqual(self.client.post(url, {}).status_code, 404)
+
+    @override_settings(DEBUG=False)
+    def test_custom_404(self):
+        for url in ["/places/999999/", "/places/abc/", "/unknown/"]:
+            self.assertContains(
+                self.client.get(url), "Страница не найдена", status_code=404
+            )
+
+    def test_place_create_edit_delete(self):
+        data = {
+            "name": "Новое место",
+            "city": "Москва",
+            "country": "Россия",
+            "category": "Парк",
         }
-        response = self.client.get("/", parameters)
-        self.assertEqual(response.context["initial_data"]["count"], 1)
-        self.assertContains(response, 'value="2026-06-10"')
-        self.assertContains(response, f'value="{self.trip.pk}" selected')
-
-
-class DetailPageTests(WebFixture):
-    def test_named_urls_have_application_namespace(self):
-        self.assertEqual(reverse("visited_places:journal"), "/")
-        self.assertEqual(reverse("visited_places:places"), "/places/")
+        response = self.client.post("/places/new/", data)
+        pk = fetch_one("SELECT id FROM places WHERE name = ?", (data["name"],))[0]
+        self.assertRedirects(response, f"/places/{pk}/")
+        data["category"] = "Музей"
+        self.client.post(f"/places/{pk}/edit/", data)
         self.assertEqual(
-            reverse("visited_places:visit-detail", args=[self.visit.pk]),
-            f"/visits/{self.visit.pk}/",
+            fetch_one("SELECT category FROM places WHERE id = ?", (pk,))[0], "Музей"
+        )
+        self.assertEqual(self.client.get(f"/places/{pk}/delete/").status_code, 200)
+        self.assertIsNotNone(fetch_one("SELECT id FROM places WHERE id = ?", (pk,)))
+        self.assertEqual(self.client.post(f"/places/{pk}/delete/").status_code, 302)
+        self.assertIsNone(fetch_one("SELECT id FROM places WHERE id = ?", (pk,)))
+
+    def test_regular_user_catalog_permissions(self):
+        self.login("journal_2")
+        for url in [
+            "/places/1/edit/",
+            "/places/1/delete/",
+            "/trips/1/edit/",
+            "/trips/1/delete/",
+        ]:
+            self.assertEqual(self.client.get(url).status_code, 403)
+            self.assertEqual(self.client.post(url, {}).status_code, 403)
+        self.assertEqual(
+            self.client.post(
+                "/places/new/",
+                {
+                    "name": "User place",
+                    "city": "City",
+                    "country": "Country",
+                    "category": "Test",
+                },
+            ).status_code,
+            302,
         )
 
-    def test_detail_pages_show_real_records_and_links(self):
-        for resource, record in (
-            ("places", self.place),
-            ("trips", self.trip),
-            ("visits", self.visit),
-        ):
-            with self.subTest(resource=resource):
-                response = self.client.get(f"/{resource}/{record.pk}/")
-                self.assertEqual(response.status_code, 200)
-                self.assertTemplateUsed(response, "visited_places/partials/detail.html")
-                self.assertTemplateUsed(
-                    response, "visited_places/partials/navigation.html"
-                )
-                self.assertEqual(response.context["record"]["id"], record.pk)
-                self.assertTrue(response.context["initial_data"]["detail"])
+    def test_unicode_duplicate_place(self):
+        response = self.client.post(
+            "/places/new/",
+            {
+                "name": "КРАСНАЯ ПЛОЩАДЬ",
+                "city": "МОСКВА",
+                "country": "РОССИЯ",
+                "category": "Test",
+            },
+        )
+        self.assertTrue(response.context["form"].errors)
+        self.assertEqual(fetch_one("SELECT COUNT(*) FROM places")[0], 6)
 
-    def test_api_returns_links_to_detail_pages(self):
-        for resource, record in (
-            ("places", self.place),
-            ("trips", self.trip),
-            ("visits", self.visit),
-        ):
-            response = self.client.get(f"/api/{resource}/{record.pk}/")
-            self.assertEqual(response.json()["url"], f"/{resource}/{record.pk}/")
+    def test_unsafe_image(self):
+        response = self.client.post(
+            "/places/new/",
+            {
+                "name": "Test",
+                "city": "City",
+                "country": "Country",
+                "category": "Test",
+                "image_url": "javascript:alert(1)",
+            },
+        )
+        self.assertIn("image_url", response.context["form"].errors)
 
-    def test_foreign_visit_detail_is_private_even_for_staff(self):
-        for user in (self.user, self.staff):
-            self.client.force_login(user)
-            response = self.client.get(f"/visits/{self.foreign_visit.pk}/")
-            self.assertEqual(response.status_code, 404)
-            self.assertNotContains(response, "Чужая заметка", status_code=404)
+    def test_trip_create_edit_delete(self):
+        data = {
+            "name": "New trip",
+            "place_id": 1,
+            "start_date": "2026-10-17",
+            "end_date": "2026-10-18",
+        }
+        self.assertEqual(self.client.post("/trips/new/", data).status_code, 302)
+        pk = fetch_one("SELECT id FROM trips WHERE name = 'New trip'")[0]
+        data["name"] = "Edited trip"
+        self.assertEqual(self.client.post(f"/trips/{pk}/edit/", data).status_code, 302)
+        self.assertEqual(self.client.post(f"/trips/{pk}/delete/").status_code, 302)
 
-    def test_missing_detail_page_shows_custom_404(self):
-        for resource in ("places", "trips", "visits"):
-            response = self.client.get(f"/{resource}/99999/")
-            self.assertContains(response, "Страница не найдена", status_code=404)
-            self.assertTemplateUsed(response, "visited_places/error.html")
+    def test_invalid_trip_dates(self):
+        response = self.client.post(
+            "/trips/new/",
+            {
+                "name": "Bad",
+                "place_id": 1,
+                "start_date": "2026-10-18",
+                "end_date": "2026-10-17",
+            },
+        )
+        self.assertIn("end_date", response.context["form"].errors)
 
-    def test_anonymous_user_cannot_open_detail_pages(self):
-        self.client.logout()
-        for resource, record in (
-            ("places", self.place),
-            ("trips", self.trip),
-            ("visits", self.visit),
-        ):
-            self.assertEqual(
-                self.client.get(f"/{resource}/{record.pk}/").status_code, 302
-            )
+    def test_trip_dates_preserve_existing_visits(self):
+        response = self.client.post(
+            "/trips/1/edit/",
+            {
+                "name": "Trip",
+                "place_id": 1,
+                "start_date": "2026-06-11",
+                "end_date": "2026-06-12",
+            },
+        )
+        self.assertIn("start_date", response.context["form"].errors)
 
-    def test_trip_detail_counts_visits_according_to_role(self):
-        url = f"/trips/{self.trip.pk}/"
-        self.assertEqual(self.client.get(url).context["record"]["visit_count"], 1)
-        self.client.force_login(self.staff)
-        self.assertEqual(self.client.get(url).context["record"]["visit_count"], 2)
+    def test_visit_create_edit_delete(self):
+        data = {
+            "trip_id": 1,
+            "visited_at": "2026-06-12T12:00",
+            "rating": 3,
+            "note": "New note",
+            "user_id": 2,
+            "place_id": 6,
+        }
+        self.assertEqual(self.client.post("/visits/new/", data).status_code, 302)
+        visit = fetch_one("SELECT * FROM visits WHERE note = 'New note'")
+        self.assertEqual(visit["user_id"], 1)
+        data.update(note="Edited note", rating="", trip_id=4)
+        self.assertEqual(
+            self.client.post(f"/visits/{visit['id']}/edit/", data).status_code, 302
+        )
+        updated = fetch_one("SELECT * FROM visits WHERE id = ?", (visit["id"],))
+        self.assertEqual(updated["trip_id"], 4)
+        self.assertIsNone(updated["rating"])
+        self.assertEqual(
+            self.client.post(f"/visits/{visit['id']}/delete/").status_code, 302
+        )
 
-    def test_detail_note_is_escaped_and_not_truncated(self):
-        self.visit.note = "<script>alert(1)</script>" + "a" * 1500
-        self.visit.save()
-        response = self.client.get(f"/visits/{self.visit.pk}/")
-        self.assertNotContains(response, "<script>alert(1)</script>")
-        self.assertContains(response, "a" * 1500)
+    def test_bad_visit(self):
+        for data in [
+            {"trip_id": 1, "visited_at": "2026-10-17T12:00", "rating": 4},
+            {"trip_id": 1, "visited_at": "2026-06-12T12:00", "rating": 6},
+            {"trip_id": 1, "visited_at": "2026-06-10T12:00", "rating": 4},
+        ]:
+            response = self.client.post("/visits/new/", data)
+            self.assertTrue(response.context["form"].errors)
+
+    def test_escaped_note(self):
+        execute(
+            "UPDATE visits SET note = ? WHERE id = 1", ("<script>alert(1)</script>",)
+        )
+        response = self.client.get("/visits/1/")
         self.assertContains(response, "&lt;script&gt;")
+        self.assertNotContains(response, "<script>alert(1)</script>")
 
-    @override_settings(DEBUG=False, SECURE_SSL_REDIRECT=False)
-    def test_unmatched_url_uses_custom_404_in_production(self):
-        response = self.client.get("/page-does-not-exist/")
-        self.assertContains(response, "Страница не найдена", status_code=404)
+    def test_protected_deletion(self):
+        self.assertEqual(self.client.post("/places/1/delete/").status_code, 409)
+        self.assertEqual(self.client.post("/trips/1/delete/").status_code, 409)
 
+    def test_statistics(self):
+        response = self.client.get("/statistics/")
+        self.assertEqual(response.context["summary"]["visits"], 4)
+        self.assertEqual(response.context["summary"]["places"], 4)
+        self.assertEqual(response.context["summary"]["rating"], 4.67)
+        self.assertEqual(len(response.context["by_place"]), 4)
+        self.assertEqual(len(response.context["by_country"]), 1)
 
-class TemplateFilterTests(SimpleTestCase):
-    def test_dates_and_times_are_formatted_in_moscow_timezone(self):
-        from visited_places.templatetags.journal_display import (
-            journal_date,
-            journal_time,
+    def test_having_filter(self):
+        response = self.client.get("/statistics/", {"minimum": 2})
+        self.assertEqual(len(response.context["by_place"]), 0)
+
+    def test_extreme_having_threshold(self):
+        response = self.client.get("/statistics/", {"minimum": "9" * 100})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context["by_place"]), 0)
+
+    @override_settings(
+        PASSWORD_HASHERS=["django.contrib.auth.hashers.PBKDF2PasswordHasher"]
+    )
+    def test_standard_password_hash(self):
+        execute(
+            "UPDATE users SET password = ? WHERE id = 1",
+            (make_password("Test-Travel-2026!"),),
         )
+        self.login()
+        self.assertEqual(self.client.session["user_id"], 1)
 
-        self.assertEqual(journal_date("2026-06-10"), "10.06.2026")
-        self.assertEqual(journal_date("2026-06-09T23:40:00Z"), "10.06.2026")
-        self.assertEqual(journal_time("2026-06-09T23:40:00Z"), "02:40")
+    def test_sql_changes_are_visible(self):
+        execute("UPDATE places SET name = ? WHERE id = 1", ("Название из SQLite",))
+        self.assertContains(self.client.get("/places/1/"), "Название из SQLite")
 
-    def test_missing_or_invalid_dates_do_not_break_templates(self):
-        from visited_places.templatetags.journal_display import (
-            journal_date,
-            journal_time,
-        )
+    def test_forms_and_templates(self):
+        response = self.client.get("/visits/1/edit/")
+        self.assertTemplateUsed(response, "visited_places/base.html")
+        self.assertTemplateUsed(response, "visited_places/partials/navigation.html")
+        self.assertContains(response, 'name="csrfmiddlewaretoken"')
+        self.assertNotIn("place_id", response.context["form"].fields)
+        self.assertNotIn("user_id", response.context["form"].fields)
+        initial = response.context["form"].initial["visited_at"]
+        self.assertEqual(initial, datetime(2026, 6, 10, 12, 0))
 
-        for value in (None, "", "bad-date", "2026-02-30", 123):
-            with self.subTest(value=value):
-                self.assertEqual(journal_date(value), "")
-                self.assertEqual(journal_time(value), "")
+    def test_removed_api(self):
+        self.assertEqual(self.client.get("/api/places/").status_code, 404)
 
+    def test_missing_trailing_slash(self):
+        self.assertRedirects(self.client.get("/places"), "/places/", status_code=301)
 
-class ImportTests(TestCase):
-    def test_console_import_preserves_source_and_is_idempotent(self):
-        from visited_places.service import TravelJournal
-        from visited_places.storage import save_journal
-
-        journal = TravelJournal()
-        user = journal.add_user("Логвинов Глеб Дмитриевич", "gleb@example.com")
-        place = journal.add_place("Музей", "Москва", "Россия", "Музей")
-        trip = journal.add_trip(place.id, "Выходные", "2026-06-10", "2026-06-12")
-        journal.add_visit(user.id, trip.id, "2026-06-10 12:00", 5, "Память")
-        with TemporaryDirectory() as directory:
-            source = Path(directory)
-            save_journal(source, journal)
-            before = {file.name: file.read_bytes() for file in source.iterdir()}
-            call_command("import_journal", source=source, stdout=StringIO())
-            call_command("import_journal", source=source, stdout=StringIO())
-            self.assertEqual(Visit.objects.count(), 1)
-            self.assertEqual(Visit.objects.get().note, "Память")
-            self.assertEqual(Visit.objects.get().trip.place.name, "Музей")
-            self.assertFalse(User.objects.get().has_usable_password())
-            self.assertEqual(
-                before, {file.name: file.read_bytes() for file in source.iterdir()}
-            )
+    def test_private_trip_visits(self):
+        response = self.client.get("/trips/3/")
+        self.assertEqual(len(response.context["visits"]), 0)
+        self.assertEqual(len(fetch_all("SELECT * FROM visits WHERE trip_id = 3")), 1)

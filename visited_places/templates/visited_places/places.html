@@ -1,0 +1,40 @@
+{% extends "visited_places/base.html" %}
+{% block content %}
+  <div class="page-heading"><h1>Места</h1><a class="button"
+   href="{% url 'visited_places:place-create' %}"><i data-lucide="plus"></i>Добавить место</a></div>
+  <form method="get" class="filters">
+    <label class="search-label">
+      <span>Поиск</span><input type="search"
+       name="q"
+       value="{{ q }}"
+       placeholder="Название, город или страна">
+    </label>
+    <label class="checkbox-label"><input type="checkbox"
+       name="unvisited"
+       value="1"
+       {% if unvisited %}checked{% endif %}>Только непосещённые</label>
+    <button class="icon-button filter-submit" title="Найти" aria-label="Найти">
+      <i data-lucide="search"></i>
+    </button>
+    <a class="icon-button filter-submit"
+       href="{% url 'visited_places:places' %}"
+       title="Сбросить фильтры"
+       aria-label="Сбросить фильтры"><i data-lucide="rotate-ccw"></i></a>
+  </form>
+  <div class="place-grid">
+    {% for place in places %}
+      <article class="place-card">
+        <a class="photo-link"
+           href="{% url 'visited_places:place-detail' place.id %}">
+          {% include "visited_places/partials/photo.html" with place=place only %}
+        </a>
+        <div class="place-card-body">
+          <p class="category">{{ place.category }}</p>
+          <h2><a href="{% url 'visited_places:place-detail' place.id %}">{{ place.name }}</a></h2>
+          <p class="muted">{{ place.city }}, {{ place.country }}</p>
+        </div>
+      </article>
+{% empty %}<p class="empty-state">Мест не найдено.</p>{% endfor %}
+  </div>
+  {% include "visited_places/partials/pagination.html" %}
+{% endblock %}

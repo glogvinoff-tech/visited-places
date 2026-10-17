@@ -1,0 +1,40 @@
+{% extends "visited_places/base.html" %}
+{% block content %}
+  <a class="back-link" href="{% url 'visited_places:places' %}"><i data-lucide="arrow-left"></i>Места</a>
+  <div class="page-heading"><h1>{{ place.name }}</h1>{% if user.is_staff %}<div class="actions"><a class="icon-button"
+   href="{% url 'visited_places:place-edit' place.id %}"
+   title="Изменить место"
+   aria-label="Изменить место"><i data-lucide="pencil"></i></a><a class="icon-button danger-text"
+   href="{% url 'visited_places:place-delete' place.id %}"
+   title="Удалить место"
+   aria-label="Удалить место"><i data-lucide="trash-2"></i></a></div>{% endif %}</div>
+  <div class="detail-layout">
+    {% include "visited_places/partials/photo.html" with place=place only %}
+    <dl>
+      <div>
+        <dt>Город</dt>
+        <dd>
+          {{ place.city }}
+        </dd>
+      </div>
+      <div>
+        <dt>Страна</dt>
+        <dd>
+          {{ place.country }}
+        </dd>
+      </div>
+      <div>
+        <dt>Категория</dt>
+        <dd>
+          {{ place.category }}
+        </dd>
+      </div>
+      <div>
+        <dt>Место</dt>
+        <dd>
+          №{{ place.id }}
+        </dd>
+      </div>
+    </dl>
+  </div>
+{% endblock %}

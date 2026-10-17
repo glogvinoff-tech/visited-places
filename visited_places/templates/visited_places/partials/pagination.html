@@ -1,0 +1,22 @@
+<div class="pagination">
+  <span>Записей: {{ page.total }}</span>
+  <div>
+    {% if page.number > 1 %}
+      <a class="icon-button"
+         href="{% querystring page=page.previous %}"
+         title="Предыдущая страница"
+         aria-label="Предыдущая страница"><i data-lucide="chevron-left"></i></a>
+    {% else %}
+      <span class="icon-button disabled"><i data-lucide="chevron-left"></i></span>
+    {% endif %}
+    <span>{{ page.number }} / {{ page.pages }}</span>
+    {% if page.number < page.pages %}
+      <a class="icon-button"
+         href="{% querystring page=page.next %}"
+         title="Следующая страница"
+         aria-label="Следующая страница"><i data-lucide="chevron-right"></i></a>
+    {% else %}
+      <span class="icon-button disabled"><i data-lucide="chevron-right"></i></span>
+    {% endif %}
+  </div>
+</div>
